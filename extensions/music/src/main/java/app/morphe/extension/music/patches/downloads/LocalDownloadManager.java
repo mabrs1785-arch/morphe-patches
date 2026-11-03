@@ -74,6 +74,9 @@ public final class LocalDownloadManager {
     /** A range that makes no progress this many times in a row is treated as stalled. */
     private static final int MAX_STALLED_ATTEMPTS = 4;
 
+    /** How long a track of a playlist waits for the same track downloaded on its own. */
+    private static final long MAX_WAIT_FOR_OTHER_DOWNLOAD_MILLISECONDS = 5 * 60 * 1000;
+
     private static final Pattern VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{1,20}");
 
     private static final String THUMBNAIL_URL = "https://i.ytimg.com/vi/";
@@ -121,7 +124,27 @@ public final class LocalDownloadManager {
             Logger.printDebug(() -> "Skipping playlist entry with an unusable id: " + videoId);
             return false;
         }
+        // The track can be downloaded on its own at the same time, and then it is not failed.
+        final long giveUpTime = System.currentTimeMillis() + MAX_WAIT_FOR_OTHER_DOWNLOAD_MILLISECONDS;
+        while (ACTIVE_DOWNLOADS.contains(videoId) && System.currentTimeMillis() < giveUpTime) {
+            try {
+                //noinspection BusyWait
+                Thread.sleep(1000);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
         return downloadBlocking(videoId, null, null, null, 0, null, true);
+    }
+
+    /** Cancels a notification of {@link #showDownloadNotification}. */
+    static void cancelDownloadNotification(String key) {
+        Utils.runOnMainThread(() -> {
+            NotificationManager manager = (NotificationManager)
+                    Utils.getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) manager.cancel(key.hashCode());
+        });
     }
 
     static boolean isDownloaded(String videoId) {
@@ -229,7 +252,7 @@ public final class LocalDownloadManager {
     }
 
     /** @return Whether a progress update may be posted without the system dropping it. */
-    private static boolean canPostProgress() {
+    static boolean canPostProgress() {
         long now = System.currentTimeMillis();
         long previous = lastNotificationTime.get();
         return now - previous >= NOTIFICATION_INTERVAL_MILLISECONDS
@@ -241,7 +264,7 @@ public final class LocalDownloadManager {
      * The loop sleeps exactly as long as the slot is away, and repeats only if another thread
      * took the slot first. Must be called off the main thread.
      */
-    private static void awaitNotificationSlot() {
+    static void awaitNotificationSlot() {
         while (true) {
             long now = System.currentTimeMillis();
             long previous = lastNotificationTime.get();

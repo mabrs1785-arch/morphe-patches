@@ -210,6 +210,21 @@ public final class DownloadsPatch {
 
     /**
      * Injection point.
+     * Called for every request the app builds. Liked music and private playlists are listed
+     * with the account of the app, which is only known from its own requests.
+     */
+    public static void setRequestHeaders(String url, Map<String, String> requestHeaders) {
+        try {
+            if (inAppDownloads()) {
+                PlaylistDownloader.rememberAppHeaders(url, requestHeaders);
+            }
+        } catch (Exception ex) {
+            Logger.printException(() -> "setRequestHeaders failure", ex);
+        }
+    }
+
+    /**
+     * Injection point.
      * Called for the Download button of the playlists the app offers to save itself, such as
      * Liked music, which it otherwise queues as an offline playlist whose tracks all need Premium.
      */

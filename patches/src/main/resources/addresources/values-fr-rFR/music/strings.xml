@@ -214,6 +214,12 @@ Ils sont téléchargés un par un, ce qui peut être long, et il faut environ %3
   <string name="morphe_music_downloads_playlist_complete_with_failures">%1$s titres téléchargés, %2$s n\'ont pas pu l\'être</string>
   <string name="morphe_music_downloads_playlist_cancelled">Téléchargement de la playlist annulé</string>
   <string name="morphe_music_downloads_playlist_already_running">Une playlist est déjà en cours de téléchargement</string>
+  <string name="morphe_music_downloads_playlist_needs_account">Ton compte n\'est pas encore connu. Lance un titre, puis appuie de nouveau sur Télécharger</string>
+  <string name="morphe_music_downloads_playlist_listed_all_saved">Les %s titres récupérés sont déjà téléchargés</string>
+  <string name="morphe_music_downloads_playlist_incomplete">Une partie seulement de la playlist a pu être récupérée. Appuie de nouveau sur Télécharger plus tard pour le reste.</string>
+  <string name="morphe_music_downloads_playlist_started">Téléchargement de %s titres en arrière-plan</string>
+  <string name="morphe_music_downloads_playlist_waiting_network">En attente du réseau…</string>
+  <string name="morphe_music_downloads_playlist_stopped">Arrêté après %1$s titres sur %2$s. Appuie de nouveau sur Télécharger pour continuer</string>
   <!-- misc.settings.settingsPatch -->
   <!-- In languages where "About" is ambiguous, translate this as "About Morphe" (i.e., About this app). -->
   <string name="morphe_settings_music_screen_0_about_title">À propos</string>

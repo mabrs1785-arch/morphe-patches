@@ -21,6 +21,8 @@ import app.morphe.patches.shared.misc.settings.preference.PreferenceScreenPrefer
 import app.morphe.patches.shared.misc.settings.preference.SwitchPreference
 import app.morphe.patches.shared.misc.settings.preference.TextPreference
 import app.morphe.patches.shared.misc.textcomponent.hookSpannableString
+import app.morphe.patches.shared.misc.request.buildRequestPatch
+import app.morphe.patches.shared.misc.request.hookBuildRequest
 import app.morphe.patches.shared.misc.textcomponent.textComponentPatch
 import app.morphe.util.addInstructionsAtControlFlowLabel
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
@@ -97,7 +99,8 @@ val downloadsPatch = bytecodePatch(
         downloadsResourcePatch,
         settingsPatch,
         textComponentPatch,
-        musicVideoInformationPatch
+        musicVideoInformationPatch,
+        buildRequestPatch
     )
 
     compatibleWith(COMPATIBILITY_YOUTUBE_MUSIC)
@@ -162,6 +165,9 @@ val downloadsPatch = bytecodePatch(
                 """
             )
         }
+
+        // Liked music and private playlists are listed with the account of the app.
+        hookBuildRequest("$EXTENSION_CLASS->setRequestHeaders")
 
         // Accounts offered Premium get an upsell command from the Download option instead.
         offlineUpsellCommandFingerprint(

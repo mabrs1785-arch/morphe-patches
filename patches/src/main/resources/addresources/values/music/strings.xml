@@ -226,6 +226,12 @@ They are downloaded one at a time, which can take a long time and needs about %3
     <string name="morphe_music_downloads_playlist_complete_with_failures">%1$s tracks downloaded, %2$s could not be downloaded</string>
     <string name="morphe_music_downloads_playlist_cancelled">Playlist download cancelled</string>
     <string name="morphe_music_downloads_playlist_already_running">A playlist is already being downloaded</string>
+    <string name="morphe_music_downloads_playlist_needs_account">Your account is not known yet. Play any song, then tap Download again</string>
+    <string name="morphe_music_downloads_playlist_listed_all_saved">The %s tracks that could be listed are already downloaded</string>
+    <string name="morphe_music_downloads_playlist_incomplete">Only part of the playlist could be listed. Tap Download again later to get the rest.</string>
+    <string name="morphe_music_downloads_playlist_started">Downloading %s tracks in the background</string>
+    <string name="morphe_music_downloads_playlist_waiting_network">Waiting for the network…</string>
+    <string name="morphe_music_downloads_playlist_stopped">Stopped after %1$s of %2$s tracks. Tap Download again to continue</string>
 
     <!-- misc.settings.settingsPatch -->
 

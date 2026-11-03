@@ -142,6 +142,27 @@ val downloadsPatch = bytecodePatch(
             )
         }
 
+        OfflinePlaylistEndpointFingerprint.method.apply {
+            // The command holds the offline playlist endpoint, read from its buffer.
+            val commandClass = mutableClassDefBy(parameterTypes[0].toString())
+            if (commandClass.interfaces.none { it == EXTENSION_PROTOCOL_BUFFER_INTERFACE }) {
+                commandClass.interfaces.add(EXTENSION_PROTOCOL_BUFFER_INTERFACE)
+            }
+
+            // v0 is set before it is read at the start of the method.
+            addInstructionsWithLabels(
+                0,
+                """
+                    invoke-static/range { p1 .. p1 }, $EXTENSION_CLASS->offlinePlaylistEndpointOnClick(Ljava/lang/Object;)Z
+                    move-result v0
+                    if-eqz v0, :save_offline_playlist
+                    return-void
+                    :save_offline_playlist
+                    nop
+                """
+            )
+        }
+
         // Accounts offered Premium get an upsell command from the Download option instead.
         offlineUpsellCommandFingerprint(
             OfflineUpsellRequestFingerprint.classDef.type

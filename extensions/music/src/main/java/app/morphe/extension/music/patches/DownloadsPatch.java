@@ -54,6 +54,10 @@ public final class DownloadsPatch {
 
     /** Command field of the 'ypc/get_offline_upsell' endpoint. */
     private static final int OFFLINE_UPSELL_ENDPOINT = 133724106;
+    /** Command field of the offline playlist endpoint, with the playlist id in field 1 and the action in field 2. */
+    private static final int OFFLINE_PLAYLIST_ENDPOINT = 73082583;
+    /** Action of the offline playlist endpoint that saves the playlist. The others remove or refresh it. */
+    private static final long OFFLINE_PLAYLIST_ACTION_ADD = 1;
     private static final Pattern VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
     /**
      * Liked music, user and editorial playlists, mixes, album playlists and album pages,
@@ -205,6 +209,46 @@ public final class DownloadsPatch {
     }
 
     /**
+     * Injection point.
+     * Called for the Download button of the playlists the app offers to save itself, such as
+     * Liked music, which it otherwise queues as an offline playlist whose tracks all need Premium.
+     */
+    public static boolean offlinePlaylistEndpointOnClick(@Nullable Object command) {
+        try {
+            if (!inAppDownloads() || !(command instanceof ProtocolBufferFieldInterface message)) {
+                return false;
+            }
+
+            ProtoMessage endpoint = new ProtoMessage(message.toByteArray())
+                    .messageField(OFFLINE_PLAYLIST_ENDPOINT);
+            String playlistId = endpoint.stringField(1);
+            final long action = endpoint.varintField(2);
+            Logger.printDebug(() -> "Offline playlist endpoint of " + playlistId + ", action: " + action);
+
+            // Removing or refreshing a playlist the app saved is left to the app.
+            if (action != OFFLINE_PLAYLIST_ACTION_ADD || !PLAYLIST_ID.matcher(playlistId).matches()) {
+                return false;
+            }
+
+            startPlaylistDownload(playlistId);
+            return true;
+        } catch (Exception ex) {
+            Logger.printException(() -> "offlinePlaylistEndpointOnClick failure", ex);
+            return false;
+        }
+    }
+
+    private static void startPlaylistDownload(String playlistId) {
+        // A single tap can resolve the command twice.
+        final long now = System.currentTimeMillis();
+        if (now - lastPlaylistDownloadTime < IGNORE_DOUBLE_CLICK_DURATION_MS) return;
+        lastPlaylistDownloadTime = now;
+
+        Logger.printDebug(() -> "Playlist download of " + playlistId);
+        PlaylistDownloader.start(playlistId);
+    }
+
+    /**
      * The field that holds the playlist is not known, so every text of the endpoint and of its
      * encoded parameters is checked for the shape of a playlist id.
      *
@@ -275,12 +319,7 @@ public final class DownloadsPatch {
             String playlistId = getOfflineUpsellPlaylistId(commandBytes);
             if (playlistId == null) return false;
 
-            final long now = System.currentTimeMillis();
-            if (now - lastPlaylistDownloadTime < IGNORE_DOUBLE_CLICK_DURATION_MS) return true;
-            lastPlaylistDownloadTime = now;
-
-            Logger.printDebug(() -> "Playlist download of " + playlistId);
-            PlaylistDownloader.start(playlistId);
+            startPlaylistDownload(playlistId);
             return true;
         } catch (Exception ex) {
             Logger.printException(() -> "offlineUpsellOnClick failure", ex);

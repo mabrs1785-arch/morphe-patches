@@ -75,6 +75,49 @@ final class ProtoMessage {
         return repeatedMessageField(fieldNumber, WIRE_LENGTH_DELIMITED);
     }
 
+    /**
+     * @return Every length delimited field of this message and of its nested messages that is
+     *         printable text, in wire order. A field that is not a valid message is read as text only.
+     */
+    List<String> allTextFields() {
+        List<String> texts = new ArrayList<>();
+        collectTextFields(texts, 0);
+        return texts;
+    }
+
+    private static final int MAX_TEXT_FIELD_DEPTH = 8;
+
+    private void collectTextFields(List<String> texts, int depth) {
+        if (depth > MAX_TEXT_FIELD_DEPTH) return;
+        CodedInputStream input = CodedInputStream.newInstance(data, start, end - start);
+        try {
+            for (int tag; (tag = input.readTag()) != 0;) {
+                int wireType = WireFormat.getTagWireType(tag);
+                if (wireType != WIRE_LENGTH_DELIMITED) {
+                    if (wireType != WIRE_VARINT && wireType != WIRE_FIXED64 && wireType != WIRE_FIXED32) return;
+                    input.skipField(tag);
+                    continue;
+                }
+                int length = input.readRawVarint32();
+                int valueStart = start + input.getTotalBytesRead();
+                input.skipRawBytes(length);
+                ProtoMessage field = new ProtoMessage(data, valueStart, valueStart + length);
+                if (field.isPrintableText()) texts.add(field.utf8Text());
+                field.collectTextFields(texts, depth + 1);
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // Text that is read as a message ends here, and the fields read so far are kept.
+        }
+    }
+
+    private boolean isPrintableText() {
+        if (isEmpty()) return false;
+        for (int i = start; i < end; i++) {
+            if (data[i] < 0x20 || data[i] > 0x7E) return false;
+        }
+        return true;
+    }
+
     private List<ProtoMessage> repeatedMessageField(int fieldNumber, int expectedWireType) {
         List<ProtoMessage> matches = new ArrayList<>();
         CodedInputStream input = CodedInputStream.newInstance(data, start, end - start);

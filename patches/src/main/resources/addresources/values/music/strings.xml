@@ -212,6 +212,20 @@ Downloaded tracks appear here"</string>
     <string name="morphe_music_downloads_progress">Downloading %s%%</string>
     <string name="morphe_music_downloads_complete">Download complete</string>
     <string name="morphe_music_downloads_failed">Download failed</string>
+    <string name="morphe_music_downloads_playlist_title">Playlist download</string>
+    <string name="morphe_music_downloads_playlist_listing">Listing the tracks of the playlist…</string>
+    <string name="morphe_music_downloads_playlist_listed">%s tracks listed…</string>
+    <string name="morphe_music_downloads_playlist_empty">Could not list the tracks of the playlist</string>
+    <string name="morphe_music_downloads_playlist_all_saved">All %s tracks are already downloaded</string>
+    <string name="morphe_music_downloads_playlist_confirm_message">"This playlist has %1$s tracks, and %2$s are not downloaded yet.
+
+They are downloaded one at a time, which can take a long time and needs about %3$s of free space."</string>
+    <string name="morphe_music_downloads_playlist_confirm_button">Download</string>
+    <string name="morphe_music_downloads_playlist_progress">Downloading track %1$s of %2$s</string>
+    <string name="morphe_music_downloads_playlist_complete">%s tracks downloaded</string>
+    <string name="morphe_music_downloads_playlist_complete_with_failures">%1$s tracks downloaded, %2$s could not be downloaded</string>
+    <string name="morphe_music_downloads_playlist_cancelled">Playlist download cancelled</string>
+    <string name="morphe_music_downloads_playlist_already_running">A playlist is already being downloaded</string>
 
     <!-- misc.settings.settingsPatch -->
 

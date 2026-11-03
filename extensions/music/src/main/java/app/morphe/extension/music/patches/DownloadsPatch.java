@@ -17,11 +17,14 @@ import android.view.ViewGroup;
 import androidx.annotation.Nullable;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
 import app.morphe.extension.music.patches.downloads.LocalDownloadManager;
+import app.morphe.extension.music.patches.downloads.PlaylistDownloader;
 import app.morphe.extension.music.settings.Settings;
 import app.morphe.extension.music.shared.VideoInformation;
 import app.morphe.extension.shared.Logger;
@@ -52,8 +55,16 @@ public final class DownloadsPatch {
     /** Command field of the 'ypc/get_offline_upsell' endpoint. */
     private static final int OFFLINE_UPSELL_ENDPOINT = 133724106;
     private static final Pattern VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
+    /**
+     * Liked music, user and editorial playlists, mixes, album playlists and album pages,
+     * with or without the 'VL' prefix of a playlist page.
+     */
+    private static final Pattern PLAYLIST_ID = Pattern.compile(
+            "(VL)?(LM|PL[A-Za-z0-9_-]{16,}|OLAK5uy_[A-Za-z0-9_-]{11,}|RD[A-Za-z0-9_-]{10,})"
+                    + "|MPRE[A-Za-z0-9_-]{8,}");
 
     private static volatile long lastFlyoutDownloadTime;
+    private static volatile long lastPlaylistDownloadTime;
     private static volatile long lastMainPlayerDownloadTime;
     /** When the player button was last left to the app, because only menus are overridden. */
     private static volatile long lastStockPlayerButtonTime;
@@ -194,6 +205,35 @@ public final class DownloadsPatch {
     }
 
     /**
+     * The field that holds the playlist is not known, so every text of the endpoint and of its
+     * encoded parameters is checked for the shape of a playlist id.
+     *
+     * @return The playlist id, or null if the endpoint is not of a playlist or an album.
+     */
+    @Nullable
+    private static String getOfflineUpsellPlaylistId(byte[] command) {
+        List<String> texts = new ArrayList<>();
+        try {
+            ProtoMessage endpoint = new ProtoMessage(command).messageField(OFFLINE_UPSELL_ENDPOINT);
+            texts.addAll(endpoint.allTextFields());
+            String value = endpoint.stringField(1);
+            if (!value.isEmpty()) {
+                texts.addAll(new ProtoMessage(Base64.decode(Uri.decode(value), Base64.URL_SAFE))
+                        .allTextFields());
+            }
+        } catch (IllegalArgumentException ex) {
+            // The texts read before the malformed part are still checked.
+            Logger.printDebug(() -> "Could not read every field of the offline upsell", ex);
+        }
+
+        Logger.printDebug(() -> "Offline upsell texts: " + texts);
+        for (String text : texts) {
+            if (PLAYLIST_ID.matcher(text).matches()) return text;
+        }
+        return null;
+    }
+
+    /**
      * Injection point.
      * Called for accounts that are allowed to save the song.
      */
@@ -219,11 +259,29 @@ public final class DownloadsPatch {
             }
             Utils.verifyOnMainThread();
 
-            String videoId = getOfflineUpsellVideoId(message.toByteArray());
-            // Albums and playlists are left to the app.
-            if (videoId.isEmpty()) return false;
+            byte[] commandBytes = message.toByteArray();
+            String videoId;
+            try {
+                videoId = getOfflineUpsellVideoId(commandBytes);
+            } catch (IllegalArgumentException ex) {
+                // The parameters of a playlist are not encoded like the ones of a song.
+                videoId = "";
+            }
+            if (!videoId.isEmpty()) return onMenuDownload(videoId);
 
-            return onMenuDownload(videoId);
+            // Albums and playlists are downloaded track by track with the local downloads,
+            // and are left to the app with the other download modes.
+            if (!inAppDownloads()) return false;
+            String playlistId = getOfflineUpsellPlaylistId(commandBytes);
+            if (playlistId == null) return false;
+
+            final long now = System.currentTimeMillis();
+            if (now - lastPlaylistDownloadTime < IGNORE_DOUBLE_CLICK_DURATION_MS) return true;
+            lastPlaylistDownloadTime = now;
+
+            Logger.printDebug(() -> "Playlist download of " + playlistId);
+            PlaylistDownloader.start(playlistId);
+            return true;
         } catch (Exception ex) {
             Logger.printException(() -> "offlineUpsellOnClick failure", ex);
             return false;

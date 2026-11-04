@@ -69,7 +69,7 @@ final class OfflineCatalogue {
 
     /**
      * @return If a track with this video id is downloaded. The folder is listed the first time,
-     *         which must be done off the main thread.
+     *         which takes a few milliseconds, unlike reading its tracks.
      */
     static boolean contains(String videoId) {
         Set<String> ids = videoIds;

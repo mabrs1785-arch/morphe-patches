@@ -7,10 +7,14 @@
 
 package app.morphe.patches.music.interaction.downloads
 
+import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLabels
+import app.morphe.patcher.extensions.InstructionExtensions.getInstruction
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.cloneParameters
+import app.morphe.patcher.util.findFreeRegister
+import app.morphe.patcher.util.getReference
 import app.morphe.patches.music.misc.auth.authHookPatch
 import app.morphe.patches.music.misc.litho.filter.lithoFilterPatch
 import app.morphe.patches.music.misc.settings.PreferenceScreen
@@ -29,6 +33,8 @@ import app.morphe.util.ResourceGroup
 import app.morphe.util.addInstructionsAtControlFlowLabel
 import app.morphe.util.copyResources
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.reference.FieldReference
+import com.android.tools.smali.dexlib2.iface.reference.TypeReference
 
 private val DOWNLOADS_PERMISSIONS = listOf(
     "android.permission.WAKE_LOCK",
@@ -199,5 +205,48 @@ val downloadsPatch = bytecodePatch(
                 nop
             """
         )
+
+        // The rows of the playlists, of Liked music and of the song results are native views.
+        // The details text of a row gets the mark when its song is bound, once the text is set.
+        val commandType = CommandResolverFingerprint.method.parameterTypes[1].toString()
+        val rendererTypes = mutableSetOf<String>()
+        TwoColumnItemPresenterConstructorFingerprint.matchAll().forEach { presenter ->
+            val detailsField = presenter.instructionMatches.last().fieldReference
+            val bind = twoColumnItemBindFingerprint(presenter.originalClassDef.type)
+
+            bind.method.apply {
+                val castIndex = bind.instructionMatches.first().index
+                val boundType = getInstruction(castIndex).getReference<TypeReference>()!!.type
+                // One presenter binds the renderer of the row, the other a wrapper that holds it.
+                val rendererField = if (classDefBy(boundType).fields.any { it.type == commandType }) {
+                    null
+                } else {
+                    getInstruction(castIndex + 1).getReference<FieldReference>()!!
+                }
+                rendererTypes.add(rendererField?.type ?: boundType)
+
+                val insertIndex = bind.instructionMatches.last().index
+                val detailsRegister = findFreeRegister(insertIndex)
+                val rendererRegister = findFreeRegister(insertIndex, detailsRegister)
+                val unwrap = rendererField?.let {
+                    "check-cast v$rendererRegister, $boundType\n" +
+                        "iget-object v$rendererRegister, v$rendererRegister, ${it.definingClass}->${it.name}:${it.type}"
+                } ?: ""
+                addInstructions(
+                    insertIndex,
+                    """
+                        move-object/from16 v$detailsRegister, p0
+                        iget-object v$detailsRegister, v$detailsRegister, ${detailsField.definingClass}->${detailsField.name}:${detailsField.type}
+                        move-object/from16 v$rendererRegister, p2
+                        $unwrap
+                        invoke-static { v$detailsRegister, v$rendererRegister }, $EXTENSION_CLASS->onTwoColumnItemBound(Landroid/widget/TextView;Ljava/lang/Object;)V
+                    """
+                )
+            }
+        }
+        // The renderer of a row is read as a buffer, like the commands.
+        rendererTypes.forEach {
+            mutableClassDefBy(it).interfaces.add(EXTENSION_PROTOCOL_BUFFER_INTERFACE)
+        }
     }
 }

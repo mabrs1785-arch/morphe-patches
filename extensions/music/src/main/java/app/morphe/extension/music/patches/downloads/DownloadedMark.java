@@ -32,7 +32,7 @@ public final class DownloadedMark {
 
     /**
      * @return If a track with this video id is downloaded. The downloads folder is listed the
-     *         first time, so this is called off the main thread.
+     *         first time, which takes a few milliseconds.
      */
     public static boolean isDownloaded(String videoId) {
         return OfflineCatalogue.contains(videoId);

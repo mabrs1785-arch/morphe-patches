@@ -80,7 +80,7 @@ final class OfflineCatalogue {
     static boolean contains(String videoId) {
         Snapshot snapshot = cached();
         if (snapshot == null) {
-            readInBackground();
+            readIfNeeded();
             return false;
         }
 
@@ -96,8 +96,12 @@ final class OfflineCatalogue {
         return index.videoIds().contains(videoId);
     }
 
-    private static void readInBackground() {
-        if (!reading.compareAndSet(false, true)) return;
+    /**
+     * Reads the folder in the background if the catalogue has not been read yet. Called ahead of
+     * the first list, since the rows built before the read ends carry no mark.
+     */
+    static void readIfNeeded() {
+        if (cached() != null || !reading.compareAndSet(false, true)) return;
         Utils.runOnBackgroundThread(() -> {
             try {
                 update(LocalDownloadManager.getDownloadDirectory());

@@ -105,12 +105,14 @@ public final class DownloadsPatch {
                 Logger.printDebug(() -> "Found download button label: " + downloadButtonLabel);
             }
 
-            if (inAppDownloads() && Settings.DOWNLOADS_MARK.get()
-                    && Utils.contains(path, DownloadedMarkFilter.SONG_ROW_PATH)) {
-                String videoId = DownloadedMarkFilter.downloadedRow();
-                if (videoId != null) {
-                    Logger.printDebug(() -> "Text of downloaded " + videoId + " at " + path + ": " + original);
-                    if (Utils.contains(path, SONG_ROW_DETAILS_PATH)) return DownloadedMark.addTo(original);
+            if (inAppDownloads() && Settings.DOWNLOADS_MARK.get()) {
+                DownloadedMark.prepare();
+                if (Utils.contains(path, DownloadedMarkFilter.SONG_ROW_PATH)) {
+                    String videoId = DownloadedMarkFilter.downloadedRow();
+                    if (videoId != null) {
+                        Logger.printDebug(() -> "Text of downloaded " + videoId + " at " + path + ": " + original);
+                        if (Utils.contains(path, SONG_ROW_DETAILS_PATH)) return DownloadedMark.addTo(original);
+                    }
                 }
             }
         } catch (Exception ex) {

@@ -36,7 +36,21 @@ public final class DownloadedMark {
     private static final int WIRE_TYPE_MASK = 0x07;
     private static final int WIRE_TYPE_LENGTH_DELIMITED = 2;
 
+    /** If the catalogue was asked for once, which reads it ahead of the first list. */
+    private static volatile boolean prepared;
+
     private DownloadedMark() {
+    }
+
+    /**
+     * Reads the catalogue in the background the first time, from the first text the app shows,
+     * so the first rows of a list already get their marks. Reading it takes a moment with
+     * thousands of tracks.
+     */
+    public static void prepare() {
+        if (prepared) return;
+        prepared = true;
+        OfflineCatalogue.readIfNeeded();
     }
 
     /**

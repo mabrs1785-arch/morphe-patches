@@ -131,7 +131,7 @@ final class OfflineArtworkLoader {
      */
     static void load(ImageView view, File artworkFile, int maxSize, OfflineUi ui,
                      boolean newestFirst) {
-        final String key = artworkFile.getAbsolutePath() + '@' + maxSize;
+        String key = artworkFile.getAbsolutePath() + '@' + maxSize;
 
         Bitmap cached = cache.get(key);
         if (cached != null) {
@@ -200,7 +200,7 @@ final class OfflineArtworkLoader {
                     cache.put(key, bitmap);
                 }
 
-                final Bitmap decoded = bitmap;
+                Bitmap decoded = bitmap;
                 mainHandler.post(() -> {
                     ImageView shown = target.get();
                     if (shown != null && key.equals(shown.getTag())) {

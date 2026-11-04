@@ -445,11 +445,11 @@ public final class LocalDownloadsFragment extends PreferenceFragment
      */
     private void loadCatalogue() {
         final int generation = ++loadGeneration;
-        final File directory = musicRoot;
-        final OfflinePlaylistManager manager = playlistManager;
+        File directory = musicRoot;
+        OfflinePlaylistManager manager = playlistManager;
         reading = true;
 
-        final CatalogueSnapshot shown = cachedCatalogue();
+        CatalogueSnapshot shown = cachedCatalogue();
         final boolean showingCache = shown != null
                 && shown.directory().equals(directory.getAbsolutePath());
         if (showingCache) {
@@ -466,7 +466,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             } catch (Exception ex) {
                 Logger.printException(() -> "Could not read the local playlists", ex);
             }
-            final List<OfflinePlaylist> loadedPlaylists = playlistsRead;
+            List<OfflinePlaylist> loadedPlaylists = playlistsRead;
             if (loadedPlaylists != null) {
                 Utils.runOnMainThread(() -> {
                     if (generation != loadGeneration || getActivity() == null) return;
@@ -482,7 +482,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
                 Logger.printException(() -> "Could not read the downloads", ex);
             }
 
-            final CatalogueSnapshot read = snapshot;
+            CatalogueSnapshot read = snapshot;
             Utils.runOnMainThread(() -> {
                 if (generation != loadGeneration || getActivity() == null) return;
                 reading = false;
@@ -525,7 +525,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     @Nullable
     private static CatalogueSnapshot readCatalogue(File directory) {
         final int editsBefore;
-        final CatalogueSnapshot cached;
+        CatalogueSnapshot cached;
         synchronized (catalogueLock) {
             editsBefore = catalogueEdits;
             cached = cachedCatalogue;
@@ -541,7 +541,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             }
         }
 
-        final String path = directory.getAbsolutePath();
+        String path = directory.getAbsolutePath();
         final boolean sameFolder = cached != null && cached.directory().equals(path);
         if (sameFolder && cached.modified() == modified && cached.audioFiles() == audioNames.size()) {
             return cached;
@@ -1061,7 +1061,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     }
 
     private void bindRow(RowViews views, OfflineTrack track) {
-        final String path = track.audioFile().getAbsolutePath();
+        String path = track.audioFile().getAbsolutePath();
 
         views.checkBox.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
         views.checkBox.setChecked(selectedTrackPaths.contains(path));
@@ -1304,8 +1304,8 @@ public final class LocalDownloadsFragment extends PreferenceFragment
 
     /** Thousands of files take a while to remove, so the disk is left to a background thread. */
     private void deleteAll() {
-        final List<OfflineTrack> deleted = new ArrayList<>(tracks);
-        final File directory = musicRoot;
+        List<OfflineTrack> deleted = new ArrayList<>(tracks);
+        File directory = musicRoot;
         final int generation = ++loadGeneration;
 
         setSelectionMode(false);
@@ -1354,7 +1354,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             Utils.showToastShort(str("morphe_music_downloads_track_delete_failed"));
             return;
         }
-        final String path = track.audioFile().getAbsolutePath();
+        String path = track.audioFile().getAbsolutePath();
         selectedTrackPaths.remove(path);
 
         List<OfflineTrack> remaining = new ArrayList<>(tracks);

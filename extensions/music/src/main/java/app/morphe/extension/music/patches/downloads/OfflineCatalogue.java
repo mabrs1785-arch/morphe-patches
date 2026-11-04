@@ -13,8 +13,14 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import app.morphe.extension.shared.Logger;
+import app.morphe.extension.shared.Utils;
 
 /**
  * The downloaded tracks, read from their folder off the main thread.
@@ -47,6 +53,16 @@ final class OfflineCatalogue {
     @Nullable
     private static Snapshot cached;
 
+    /** The video ids of the tracks of a catalogue, for the marks of the lists of the app. */
+    private record IdIndex(Snapshot snapshot, Set<String> videoIds) {
+    }
+
+    @Nullable
+    private static volatile IdIndex idIndex;
+
+    /** If the folder is being read for {@link #contains}. */
+    private static final AtomicBoolean reading = new AtomicBoolean();
+
     private OfflineCatalogue() {
     }
 
@@ -55,6 +71,47 @@ final class OfflineCatalogue {
         synchronized (lock) {
             return cached;
         }
+    }
+
+    /**
+     * @return If the catalogue holds the track. The folder is read in the background the first
+     *         time, so the lists built until then carry no mark.
+     */
+    static boolean contains(String videoId) {
+        Snapshot snapshot = cached();
+        if (snapshot == null) {
+            readInBackground();
+            return false;
+        }
+
+        IdIndex index = idIndex;
+        if (index == null || index.snapshot() != snapshot) {
+            Set<String> videoIds = new HashSet<>();
+            for (OfflineTrack track : snapshot.tracks()) {
+                videoIds.add(track.videoId());
+            }
+            index = new IdIndex(snapshot, videoIds);
+            idIndex = index;
+        }
+        return index.videoIds().contains(videoId);
+    }
+
+    private static void readInBackground() {
+        if (!reading.compareAndSet(false, true)) return;
+        Utils.runOnBackgroundThread(() -> {
+            try {
+                update(LocalDownloadManager.getDownloadDirectory());
+            } catch (Exception ex) {
+                Logger.printException(() -> "Could not read the downloads", ex);
+            } finally {
+                reading.set(false);
+            }
+        });
+    }
+
+    /** Lists a track just saved, if the catalogue has been read. Runs off the main thread. */
+    static void refresh(File directory) {
+        if (cached() != null) update(directory);
     }
 
     /**

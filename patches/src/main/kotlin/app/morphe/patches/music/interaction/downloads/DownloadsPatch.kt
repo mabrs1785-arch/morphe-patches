@@ -12,10 +12,12 @@ import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.cloneParameters
 import app.morphe.patches.music.misc.auth.authHookPatch
+import app.morphe.patches.music.misc.litho.filter.lithoFilterPatch
 import app.morphe.patches.music.misc.settings.PreferenceScreen
 import app.morphe.patches.music.misc.settings.settingsPatch
 import app.morphe.patches.music.shared.Constants.COMPATIBILITY_YOUTUBE_MUSIC
 import app.morphe.patches.music.video.information.musicVideoInformationPatch
+import app.morphe.patches.shared.misc.litho.filter.addLithoFilter
 import app.morphe.patches.shared.misc.settings.preference.ListPreference
 import app.morphe.patches.shared.misc.settings.preference.PreferenceScreenPreference
 import app.morphe.patches.shared.misc.settings.preference.PreferenceScreenPreference.Sorting
@@ -23,7 +25,9 @@ import app.morphe.patches.shared.misc.settings.preference.SwitchPreference
 import app.morphe.patches.shared.misc.settings.preference.TextPreference
 import app.morphe.patches.shared.misc.textcomponent.hookSpannableString
 import app.morphe.patches.shared.misc.textcomponent.textComponentPatch
+import app.morphe.util.ResourceGroup
 import app.morphe.util.addInstructionsAtControlFlowLabel
+import app.morphe.util.copyResources
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
 
 private val DOWNLOADS_PERMISSIONS = listOf(
@@ -53,6 +57,7 @@ private val downloadsResourcePatch = resourcePatch {
                 sorting = Sorting.UNSORTED,
                 preferences = setOf(
                     ListPreference("morphe_download_mode"),
+                    SwitchPreference("morphe_music_downloads_mark", summary = true),
                     SwitchPreference("morphe_external_downloader_menu", summary = true),
                     TextPreference(
                         "morphe_external_downloader_name",
@@ -60,6 +65,11 @@ private val downloadsResourcePatch = resourcePatch {
                     )
                 )
             )
+        )
+
+        copyResources(
+            "downloads",
+            ResourceGroup("drawable", "morphe_music_downloaded_mark.xml")
         )
 
         val manifest = get("AndroidManifest.xml")
@@ -95,6 +105,8 @@ private val downloadsResourcePatch = resourcePatch {
 private const val EXTENSION_CLASS = "Lapp/morphe/extension/music/patches/DownloadsPatch;"
 private const val EXTENSION_PROTOCOL_BUFFER_INTERFACE =
     $$"Lapp/morphe/extension/music/patches/DownloadsPatch$ProtocolBufferFieldInterface;"
+private const val DOWNLOADED_MARK_FILTER =
+    "Lapp/morphe/extension/music/patches/components/DownloadedMarkFilter;"
 
 
 @Suppress("unused")
@@ -107,6 +119,8 @@ val downloadsPatch = bytecodePatch(
         downloadsResourcePatch,
         settingsPatch,
         textComponentPatch,
+        // The song rows of a downloaded track are found by a filter, and their texts marked.
+        lithoFilterPatch,
         musicVideoInformationPatch,
         // Liked music and private playlists are listed with the account of the app.
         authHookPatch
@@ -115,7 +129,8 @@ val downloadsPatch = bytecodePatch(
     compatibleWith(COMPATIBILITY_YOUTUBE_MUSIC)
 
     execute {
-        hookSpannableString(EXTENSION_CLASS)
+        hookSpannableString(EXTENSION_CLASS, overrideSpan = true)
+        addLithoFilter(DOWNLOADED_MARK_FILTER)
 
         val (_, downloadCall) = OfflineVideoEndpointFingerprint.instructionMatches
 

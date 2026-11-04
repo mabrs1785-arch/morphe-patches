@@ -21,6 +21,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import app.morphe.extension.music.patches.components.DownloadedMarkFilter;
+import app.morphe.extension.music.patches.downloads.DownloadedMark;
 import app.morphe.extension.music.patches.downloads.LocalDownloadManager;
 import app.morphe.extension.music.patches.downloads.PlaylistDownloader;
 import app.morphe.extension.music.settings.Settings;
@@ -87,20 +89,31 @@ public final class DownloadsPatch {
 
     /**
      * Injection point.
-     * Usually is called of the main thread.
+     * Usually is called off the main thread.
+     *
+     * @return The text, with the downloaded mark if it is the text of a song row that is downloaded.
      */
-    public static void onLithoTextLoaded(ContextInterface conversionContext, CharSequence original) {
+    public static CharSequence onLithoTextLoaded(ContextInterface conversionContext, CharSequence original) {
         try {
+            StringBuilder path = conversionContext.patch_getPathBuilder();
             if (isFlyoutMenuOverridden()
                     && downloadButtonLabel.isEmpty()
-                    && Utils.contains(conversionContext.patch_getPathBuilder(),
-                    "music_download_button.")) {
+                    && Utils.contains(path, "music_download_button.")) {
                 downloadButtonLabel = original.toString();
                 Logger.printDebug(() -> "Found download button label: " + downloadButtonLabel);
             }
+
+            if (inAppDownloads() && Settings.DOWNLOADS_MARK.get()) {
+                String videoId = DownloadedMarkFilter.downloadedIdOf(conversionContext);
+                if (videoId != null) {
+                    Logger.printDebug(() -> "Text of downloaded " + videoId + " at " + path + ": " + original);
+                    return DownloadedMark.addTo(original);
+                }
+            }
         } catch (Exception ex) {
-            Logger.printDebug(() -> "onLithoTextLoaded failure", ex);
+            Logger.printException(() -> "onLithoTextLoaded failure", ex);
         }
+        return original;
     }
 
     /**

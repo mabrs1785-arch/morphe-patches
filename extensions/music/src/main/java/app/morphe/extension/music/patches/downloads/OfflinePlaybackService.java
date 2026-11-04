@@ -129,8 +129,8 @@ public final class OfflinePlaybackService extends Service {
         session.setCallback(new MediaSession.Callback() {
             @Override public void onPlay() { resume(); }
             @Override public void onPause() { pause(); }
-            @Override public void onSkipToNext() { playQueueOffset(1); }
-            @Override public void onSkipToPrevious() { playQueueOffset(-1); }
+            @Override public void onSkipToNext() { skip(1); }
+            @Override public void onSkipToPrevious() { skip(-1); }
             @Override public void onStop() { stopPlayback(); }
             @Override public void onSeekTo(long pos) {
                 if (playerReady()) player.seekTo((int) Math.min(Integer.MAX_VALUE, pos));
@@ -153,23 +153,34 @@ public final class OfflinePlaybackService extends Service {
                 queue = suppliedQueue;
                 queueIndex = intent.getIntExtra(EXTRA_QUEUE_INDEX, -1);
             }
-            playFile(intent.getStringExtra(EXTRA_PATH), intent.getStringExtra(EXTRA_TITLE),
-                    intent.getStringExtra(EXTRA_ARTIST), intent.getStringExtra(EXTRA_ARTWORK_PATH));
+            if (!playFile(intent.getStringExtra(EXTRA_PATH), intent.getStringExtra(EXTRA_TITLE),
+                    intent.getStringExtra(EXTRA_ARTIST), intent.getStringExtra(EXTRA_ARTWORK_PATH))) {
+                // Started with startForegroundService, so the service must not linger silently.
+                stopPlayback();
+            }
         } else if (ACTION_TOGGLE.equals(action)) {
             if (playerReady() && player.isPlaying()) pause(); else resume();
         } else if (ACTION_STOP.equals(action)) {
             stopPlayback();
         } else if (ACTION_NEXT.equals(action)) {
-            playQueueOffset(1);
+            skip(1);
         } else if (ACTION_PREVIOUS.equals(action)) {
-            playQueueOffset(-1);
+            skip(-1);
         }
         return START_NOT_STICKY;
     }
 
-    private void playFile(@Nullable String path, @Nullable String requestedTitle,
-                          @Nullable String requestedArtist, @Nullable String artworkPath) {
-        if (path == null || !new File(path).isFile()) return;
+    /**
+     * @return Whether playback of the file was started. The file can be missing, for example
+     * when it was deleted, or audio focus can be refused, and the caller then decides what to
+     * play instead, so the service is never left on a track that will never start.
+     */
+    private boolean playFile(@Nullable String path, @Nullable String requestedTitle,
+                             @Nullable String requestedArtist, @Nullable String artworkPath) {
+        if (path == null || !new File(path).isFile()) {
+            Logger.printDebug(() -> "Offline file is missing: " + path);
+            return false;
+        }
         this.path = path;
         title = requestedTitle == null ? new File(path).getName() : requestedTitle;
         artist = requestedArtist == null || requestedArtist.isBlank() ? "YouTube Music" : requestedArtist;
@@ -178,10 +189,16 @@ public final class OfflinePlaybackService extends Service {
         artwork = artworkFile != null && artworkFile.isFile()
                 ? BitmapFactory.decodeFile(artworkPath)
                 : null;
+        // A track change within the queue must not send a pause key: the key would be routed
+        // to this service's own session and could pause the next track once it is prepared.
+        final boolean alreadyPlaying = playerReady() && player.isPlaying();
         releasePlayer();
         try {
-            pauseOtherMedia();
-            if (audioFocusDenied()) return;
+            if (!alreadyPlaying) pauseOtherMedia();
+            if (audioFocusDenied()) {
+                Logger.printDebug(() -> "Audio focus refused, offline playback not started");
+                return false;
+            }
             player = new MediaPlayer();
             player.setWakeMode(this, PowerManager.PARTIAL_WAKE_LOCK);
             player.setAudioAttributes(new AudioAttributes.Builder()
@@ -204,30 +221,52 @@ public final class OfflinePlaybackService extends Service {
             });
             player.setOnCompletionListener(mp -> {
                 if (mp != player) return;
-                if (queueIndex >= 0 && queueIndex + 1 < queue.size()) playQueueOffset(1);
-                else stopPlayback();
+                if (!playQueueOffset(1)) stopPlayback();
             });
             player.setOnErrorListener((mp, what, extra) -> {
                 if (mp != player) return true;
                 Logger.printException(() -> "Offline player error: " + what + "/" + extra);
-                stopPlayback();
+                // One unreadable file must not end the whole queue.
+                if (!playQueueOffset(1)) stopPlayback();
                 return true;
             });
             player.prepareAsync();
             startForeground(NOTIFICATION_ID, notification());
+            return true;
         } catch (Exception ex) {
             Logger.printException(() -> "Could not start offline playback", ex);
-            stopPlayback();
+            releasePlayer();
+            return false;
         }
     }
 
-    private void playQueueOffset(int offset) {
+    /**
+     * Plays the track at the offset from the current one, skipping files that are missing.
+     *
+     * @return Whether a track was started.
+     */
+    private boolean playQueueOffset(int offset) {
+        if (offset == 0 || queueIndex < 0) return false;
+        final int step = offset > 0 ? 1 : -1;
         int target = queueIndex + offset;
-        if (target < 0 || target >= queue.size()) return;
+        while (target >= 0 && target < queue.size() && !new File(queue.get(target)).isFile()) {
+            target += step;
+        }
+        if (target < 0 || target >= queue.size()) return false;
+
         queueIndex = target;
         OfflineTrack track = OfflineTrack.load(new File(queue.get(target)));
-        playFile(track.audioFile().getAbsolutePath(), track.displayTitle(), track.displayArtist(),
-                track.artworkFile().getAbsolutePath());
+        return playFile(track.audioFile().getAbsolutePath(), track.displayTitle(),
+                track.displayArtist(), track.artworkFile().getAbsolutePath());
+    }
+
+    /**
+     * Skip requested from the notification, the lock screen or the downloads screen.
+     * When nothing could be started after the current track was released, the service stops
+     * instead of keeping a notification for a track that will never play.
+     */
+    private void skip(int offset) {
+        if (!playQueueOffset(offset) && player == null) stopPlayback();
     }
 
     private void resume() {

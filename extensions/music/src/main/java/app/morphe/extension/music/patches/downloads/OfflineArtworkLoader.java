@@ -136,7 +136,6 @@ final class OfflineArtworkLoader {
 
                 Bitmap bitmap = cache.get(key);
                 if (bitmap == null) {
-                    // Rows and the mini player crop the cover to a square.
                     bitmap = OfflineStorage.decodeSquareArtwork(artworkFile, size);
                     // A track saved without a cover keeps the placeholder.
                     if (bitmap == null) return;

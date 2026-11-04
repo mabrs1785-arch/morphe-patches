@@ -32,11 +32,9 @@ public final class DownloadedMark {
     private static final Drawable ICON = ResourceUtils.getDrawable("morphe_music_downloaded_mark");
 
     private static final int VIDEO_ID_LENGTH = 11;
-    /**
-     * Wire tags of the length delimited fields 1 to 5, which is where the endpoints of a song hold
-     * its video id.
-     */
-    private static final byte[] STRING_FIELD_TAGS = {0x0A, 0x12, 0x1A, 0x22, 0x2A};
+    /** Wire type of the length delimited fields, in the low bits of a tag. */
+    private static final int WIRE_TYPE_MASK = 0x07;
+    private static final int WIRE_TYPE_LENGTH_DELIMITED = 2;
 
     private DownloadedMark() {
     }
@@ -62,7 +60,8 @@ public final class DownloadedMark {
 
     /**
      * Looks through the component of a song row for a video id of a downloaded track. The row
-     * holds its song in the video id of its play endpoint and of the endpoints of its menu.
+     * holds its song in the video id of its play endpoint and of the endpoints of its menu, each
+     * a length delimited field of 11 characters.
      *
      * @return The video id, or null if the row is not of a downloaded song.
      */
@@ -79,11 +78,9 @@ public final class DownloadedMark {
         return null;
     }
 
-    private static boolean isStringFieldTag(byte value) {
-        for (byte tag : STRING_FIELD_TAGS) {
-            if (tag == value) return true;
-        }
-        return false;
+    /** A single byte tag, of the fields 1 to 15, with the length delimited wire type. */
+    private static boolean isStringFieldTag(byte tag) {
+        return tag > 0 && (tag & WIRE_TYPE_MASK) == WIRE_TYPE_LENGTH_DELIMITED;
     }
 
     private static boolean isVideoId(byte[] buffer, int start) {

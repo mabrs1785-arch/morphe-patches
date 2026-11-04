@@ -86,6 +86,8 @@ public final class DownloadsPatch {
     /** Browse id of the stock offline tab, which the local catalogue replaces. */
     private static final byte[] OFFLINE_BROWSE_ID =
             "FEmusic_offline".getBytes(StandardCharsets.US_ASCII);
+    /** In the path of the text of a song row that shows the artist, the album and the length. */
+    private static final String SONG_ROW_DETAILS_PATH = "badged_text.";
 
     /**
      * Injection point.
@@ -103,11 +105,12 @@ public final class DownloadsPatch {
                 Logger.printDebug(() -> "Found download button label: " + downloadButtonLabel);
             }
 
-            if (inAppDownloads() && Settings.DOWNLOADS_MARK.get()) {
-                String videoId = DownloadedMarkFilter.downloadedIdOf(conversionContext);
+            if (inAppDownloads() && Settings.DOWNLOADS_MARK.get()
+                    && Utils.contains(path, DownloadedMarkFilter.SONG_ROW_PATH)) {
+                String videoId = DownloadedMarkFilter.downloadedRow();
                 if (videoId != null) {
                     Logger.printDebug(() -> "Text of downloaded " + videoId + " at " + path + ": " + original);
-                    return DownloadedMark.addTo(original);
+                    if (Utils.contains(path, SONG_ROW_DETAILS_PATH)) return DownloadedMark.addTo(original);
                 }
             }
         } catch (Exception ex) {

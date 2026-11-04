@@ -25,17 +25,20 @@ import app.morphe.extension.shared.patches.components.StringFilterGroup;
 @SuppressWarnings("unused")
 public final class DownloadedMarkFilter extends Filter {
 
-    /** Start of the path of the components of a song row. */
-    private static final String SONG_ROW_PATH = "music_list_item.";
+    /** In the path of a song row and of every component inside it. */
+    public static final String SONG_ROW_PATH = "music_list_item.";
+    /**
+     * Separators after {@link #SONG_ROW_PATH} in the path of the row itself, such as
+     * "music_list_item.eml-fe|e1bdbb31ea4fcde4|CellType|". The components inside the row have more.
+     */
+    private static final int ROW_PATH_SEPARATORS = 3;
 
     /**
-     * The row built last on this thread, which the texts built next belong to. The components of
-     * a row share its context, and its texts are built right after its components.
+     * The downloaded song of the row being built on this thread, or null if the row is not of a
+     * downloaded song. The components of a row are built one after the other on the same thread,
+     * the row itself first, and each text right after its own component.
      */
-    private record Row(ContextInterface context, @Nullable String downloadedId) {
-    }
-
-    private static final ThreadLocal<Row> currentRow = new ThreadLocal<>();
+    private static final ThreadLocal<String> downloadedRow = new ThreadLocal<>();
 
     public DownloadedMarkFilter() {
         addPathCallbacks(new StringFilterGroup(Settings.DOWNLOADS_MARK, SONG_ROW_PATH));
@@ -48,29 +51,28 @@ public final class DownloadedMarkFilter extends Filter {
                               int contentIndex) {
         if (Settings.DOWNLOAD_MODE.get() != DownloadMode.IN_APP) return false;
 
-        Row row = currentRow.get();
-        if (row == null || row.context() != contextInterface) {
-            row = new Row(contextInterface, null);
-            currentRow.set(row);
-        }
-        // The song is in the first component that holds the endpoints of the row.
-        if (row.downloadedId() == null) {
+        if (isRow(path, contentIndex)) {
             String videoId = DownloadedMark.downloadedIdIn(buffer);
-            if (videoId != null) {
-                currentRow.set(new Row(contextInterface, videoId));
-                Logger.printDebug(() -> "Downloaded song row: " + path + " " + videoId);
-            }
+            downloadedRow.set(videoId);
+            if (videoId != null) Logger.printDebug(() -> "Downloaded song row of " + videoId);
         }
         return false;
     }
 
+    private static boolean isRow(CharSequence path, int matchIndex) {
+        int separators = 0;
+        for (int i = matchIndex, length = path.length(); i < length; i++) {
+            if (path.charAt(i) == '|') separators++;
+        }
+        return separators == ROW_PATH_SEPARATORS;
+    }
+
     /**
-     * @return The downloaded song of the row the text being built belongs to, or null if the row
-     *         is not of a downloaded song.
+     * @return The downloaded song of the row whose text is being built on this thread, or null if
+     *         the row is not of a downloaded song.
      */
     @Nullable
-    public static String downloadedIdOf(ContextInterface context) {
-        Row row = currentRow.get();
-        return row != null && row.context() == context ? row.downloadedId() : null;
+    public static String downloadedRow() {
+        return downloadedRow.get();
     }
 }

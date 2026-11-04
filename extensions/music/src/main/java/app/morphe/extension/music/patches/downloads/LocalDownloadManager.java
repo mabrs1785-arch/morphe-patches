@@ -31,6 +31,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -138,6 +139,26 @@ public final class LocalDownloadManager {
         return downloadBlocking(videoId, null, null, null, 0, null, true);
     }
 
+    /** Told on the main thread each time a track has been saved. */
+    private static final Set<Runnable> savedListeners = new CopyOnWriteArraySet<>();
+
+    static void addSavedListener(Runnable listener) {
+        savedListeners.add(listener);
+    }
+
+    static void removeSavedListener(Runnable listener) {
+        savedListeners.remove(listener);
+    }
+
+    private static void notifyTrackSaved() {
+        if (savedListeners.isEmpty()) return;
+        Utils.runOnMainThread(() -> {
+            for (Runnable listener : savedListeners) {
+                listener.run();
+            }
+        });
+    }
+
     /** Cancels a notification of {@link #showDownloadNotification}. */
     static void cancelDownloadNotification(String key) {
         Utils.runOnMainThread(() -> {
@@ -217,6 +238,7 @@ public final class LocalDownloadManager {
             Logger.printDebug(() -> "Saved " + destination + " (" + destination.length() + " bytes)");
 
             OfflineTrack.save(directory, videoId, title, artist, album, duration, artwork);
+            notifyTrackSaved();
             if (!quiet) Utils.showToastShort(str("morphe_music_downloads_complete"));
             return true;
         } catch (Exception ex) {

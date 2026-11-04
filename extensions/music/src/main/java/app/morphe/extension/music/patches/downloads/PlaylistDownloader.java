@@ -9,17 +9,11 @@ package app.morphe.extension.music.patches.downloads;
 
 import static app.morphe.extension.shared.StringRef.str;
 
-import android.Manifest;
 import android.app.Activity;
-import android.content.pm.PackageManager;
-import android.os.Build;
 import android.text.format.Formatter;
-
-import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import app.morphe.extension.shared.Logger;
@@ -44,8 +38,6 @@ public final class PlaylistDownloader {
     private static final long MAX_NETWORK_WAIT_MILLISECONDS = 10 * 60 * 1000;
     private static final long NETWORK_CHECK_INTERVAL_MILLISECONDS = 5000;
 
-    private static final int NOTIFICATION_PERMISSION_REQUEST_CODE = 7341;
-
     /**
      * Set while the tracks are listed or downloaded. It is not set while the confirmation waits,
      * so a dialog closed in any way never leaves it set.
@@ -56,63 +48,58 @@ public final class PlaylistDownloader {
     }
 
     /**
-     * Called for every request the app builds, to list the playlists that need the account.
-     */
-    public static void rememberAppHeaders(@Nullable String url, @Nullable Map<String, String> requestHeaders) {
-        PlaylistTracksRequest.rememberAppHeaders(url, requestHeaders);
-    }
-
-    /**
      * @param playlistId Id of the playlist or the album, such as 'LM' for Liked music,
-     *                   'OLAK5uy_...' for the playlist of an album, or the 'MPREb_...' browse id of an album.
+     *                   'OLAK5uy_...' for the playlist of an album, or the 'MPREb_...' browse id
+     *                   of an album.
      */
     public static void start(String playlistId) {
         // Listing the tracks retries for a long while before it gives up without the network.
         if (!Utils.isNetworkConnected()) {
-            Utils.showToastShort(str("morphe_music_downloads_playlist_waiting_network"));
+            Utils.showToastShort(str("morphe_music_downloads_playlist_download_waiting_network"));
             return;
         }
         if (!running.compareAndSet(false, true)) {
-            Utils.showToastShort(str("morphe_music_downloads_playlist_already_running"));
+            Utils.showToastShort(str("morphe_music_downloads_playlist_download_already_running"));
             return;
         }
 
         String browseId = toBrowseId(playlistId);
-        Logger.printInfo(() -> "Listing the tracks of " + browseId + " to download");
-        Utils.showToastShort(str("morphe_music_downloads_playlist_listing"));
-        requestNotificationPermission();
+        Logger.printDebug(() -> "Listing the tracks of " + browseId + " to download");
+        Utils.showToastShort(str("morphe_music_downloads_playlist_download_listing"));
         LocalDownloadManager.showDownloadNotification(NOTIFICATION_KEY,
-                str("morphe_music_downloads_playlist_title"), -1, true,
-                str("morphe_music_downloads_playlist_listing"));
+                str("morphe_music_downloads_playlist_download_title"), -1, true,
+                str("morphe_music_downloads_playlist_download_listing"));
 
         Utils.runOnBackgroundThread(() -> {
             try {
                 listAndConfirm(browseId);
             } catch (Exception ex) {
-                running.set(false);
-                endWithMessage(str("morphe_music_downloads_playlist_empty"));
+                endWithMessage(str("morphe_music_downloads_playlist_download_listing_failed"));
                 Logger.printException(() -> "Playlist listing failed", ex);
+            } finally {
+                // Nothing runs while the answer is awaited.
+                running.set(false);
             }
         });
     }
 
     private static void listAndConfirm(String browseId) {
-        PlaylistTracksRequest.Result result = PlaylistTracksRequest.fetchVideoIds(browseId, tracksListed -> {
-            if (LocalDownloadManager.canPostProgress()) {
-                LocalDownloadManager.showDownloadNotification(NOTIFICATION_KEY,
-                        str("morphe_music_downloads_playlist_title"), -1, true,
-                        str("morphe_music_downloads_playlist_listed", OfflineUi.trackCount(tracksListed)));
-            }
-        });
+        PlaylistTracksRequest.Result result = PlaylistTracksRequest.fetchVideoIds(browseId,
+                tracksListed -> {
+                    if (LocalDownloadManager.canPostProgress()) {
+                        LocalDownloadManager.showDownloadNotification(NOTIFICATION_KEY,
+                                str("morphe_music_downloads_playlist_download_title"), -1, true,
+                                str("morphe_music_downloads_playlist_download_listed",
+                                        OfflineUi.trackCount(tracksListed)));
+                    }
+                });
 
         if (result == PlaylistTracksRequest.NEEDS_ACCOUNT) {
-            running.set(false);
-            endWithMessage(str("morphe_music_downloads_playlist_needs_account"));
+            endWithMessage(str("morphe_music_downloads_playlist_download_needs_account"));
             return;
         }
         if (result == null || result.videoIds().isEmpty()) {
-            running.set(false);
-            endWithMessage(str("morphe_music_downloads_playlist_empty"));
+            endWithMessage(str("morphe_music_downloads_playlist_download_listing_failed"));
             return;
         }
 
@@ -122,17 +109,14 @@ public final class PlaylistDownloader {
             if (!LocalDownloadManager.isDownloaded(videoId)) missing.add(videoId);
         }
         final int alreadySaved = videoIds.size() - missing.size();
-        Logger.printInfo(() -> "Playlist has " + videoIds.size() + " tracks, "
+        Logger.printDebug(() -> "Playlist has " + videoIds.size() + " tracks, "
                 + alreadySaved + " already downloaded");
-
-        // Nothing runs while the answer is awaited.
-        running.set(false);
 
         if (missing.isEmpty()) {
             String count = OfflineUi.trackCount(videoIds.size());
             endWithMessage(result.complete()
-                    ? str("morphe_music_downloads_playlist_all_saved", count)
-                    : str("morphe_music_downloads_playlist_listed_all_saved", count));
+                    ? str("morphe_music_downloads_playlist_download_all_saved", count)
+                    : str("morphe_music_downloads_playlist_download_listed_all_saved", count));
             return;
         }
 
@@ -148,25 +132,6 @@ public final class PlaylistDownloader {
         return "VL" + playlistId;
     }
 
-    /**
-     * Without the notification permission, the progress of a download that takes hours is never shown.
-     */
-    private static void requestNotificationPermission() {
-        try {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
-            Activity activity = Utils.getActivity();
-            if (activity == null || activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                    == PackageManager.PERMISSION_GRANTED) {
-                return;
-            }
-            Logger.printInfo(() -> "Asking for the notification permission");
-            activity.requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                    NOTIFICATION_PERMISSION_REQUEST_CODE);
-        } catch (Exception ex) {
-            Logger.printInfo(() -> "Could not ask for the notification permission", ex);
-        }
-    }
-
     private static void confirm(int trackCount, List<String> missing, boolean complete) {
         Activity activity = Utils.getActivity();
         if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
@@ -174,32 +139,27 @@ public final class PlaylistDownloader {
             return;
         }
 
-        String message = str("morphe_music_downloads_playlist_confirm_message",
+        String message = str("morphe_music_downloads_playlist_download_confirm_message",
                 OfflineUi.trackCount(trackCount), OfflineUi.trackCount(missing.size()),
                 Formatter.formatShortFileSize(activity, missing.size() * AVERAGE_TRACK_BYTES));
         if (!complete) {
-            message += "\n\n" + str("morphe_music_downloads_playlist_incomplete");
+            message += "\n\n" + str("morphe_music_downloads_playlist_download_incomplete");
         }
 
-        try {
-            CustomDialog.create(activity,
-                    str("morphe_music_downloads_playlist_title"), message, null,
-                    str("morphe_music_downloads_playlist_confirm_button"),
-                    () -> {
-                        if (!running.compareAndSet(false, true)) {
-                            Utils.showToastShort(str("morphe_music_downloads_playlist_already_running"));
-                            return;
-                        }
-                        Utils.showToastShort(str("morphe_music_downloads_playlist_started",
-                                OfflineUi.trackCount(missing.size())));
-                        Utils.runOnBackgroundThread(() -> downloadAll(missing));
-                    },
-                    () -> {
-                    }, null, null, true).first.show();
-        } catch (RuntimeException ex) {
-            // The activity can be gone while the tracks were listed.
-            Logger.printInfo(() -> "Could not show the playlist confirmation", ex);
-        }
+        CustomDialog.create(activity,
+                str("morphe_music_downloads_playlist_download_title"), message, null,
+                str("morphe_music_downloads_playlist_download_confirm_button"),
+                () -> {
+                    if (!running.compareAndSet(false, true)) {
+                        Utils.showToastShort(str("morphe_music_downloads_playlist_download_already_running"));
+                        return;
+                    }
+                    Utils.showToastShort(str("morphe_music_downloads_playlist_download_started",
+                            OfflineUi.trackCount(missing.size())));
+                    Utils.runOnBackgroundThread(() -> downloadAll(missing));
+                },
+                () -> {
+                }, null, null, true).first.show();
     }
 
     private static void downloadAll(List<String> videoIds) {
@@ -212,22 +172,29 @@ public final class PlaylistDownloader {
             for (; done < total; done++) {
                 if (!awaitNetwork(done, total)) {
                     final int doneCount = done;
-                    Logger.printInfo(() -> "No network, playlist download stopped at " + doneCount + "/" + total);
-                    endWithMessage(str("morphe_music_downloads_playlist_stopped", done,
+                    Logger.printInfo(() -> "No network, playlist download stopped at "
+                            + doneCount + "/" + total);
+                    endWithMessage(str("morphe_music_downloads_playlist_download_stopped", done,
                             OfflineUi.trackCount(total)));
                     return;
                 }
 
                 if (LocalDownloadManager.canPostProgress()) {
                     LocalDownloadManager.showDownloadNotification(NOTIFICATION_KEY,
-                            str("morphe_music_downloads_playlist_title"), done * 100 / total, true,
-                            str("morphe_music_downloads_playlist_progress", done + 1, total));
+                            str("morphe_music_downloads_playlist_download_title"), done * 100 / total, true,
+                            str("morphe_music_downloads_playlist_download_progress", done + 1, total));
                 }
 
                 String videoId = videoIds.get(done);
                 boolean trackSaved = LocalDownloadManager.downloadPlaylistTrack(videoId);
-                // A connection lost in the middle of a track fails it, so it is tried again once the network is back.
-                if (!trackSaved && !Utils.isNetworkConnected() && awaitNetwork(done, total)) {
+                // A connection lost in the middle of a track fails it, so it is tried again
+                // once the network is back.
+                if (!trackSaved && !Utils.isNetworkConnected()) {
+                    if (!awaitNetwork(done, total)) {
+                        endWithMessage(str("morphe_music_downloads_playlist_download_stopped", done,
+                                OfflineUi.trackCount(total)));
+                        return;
+                    }
                     trackSaved = LocalDownloadManager.downloadPlaylistTrack(videoId);
                 }
                 if (trackSaved) {
@@ -239,15 +206,17 @@ public final class PlaylistDownloader {
 
             final int savedCount = saved;
             final int failedCount = failed;
-            Logger.printInfo(() -> "Playlist download finished, saved: " + savedCount + ", failed: " + failedCount);
+            Logger.printDebug(() -> "Playlist download finished, saved: " + savedCount
+                    + ", failed: " + failedCount);
 
             endWithMessage(failed == 0
-                    ? str("morphe_music_downloads_playlist_complete", OfflineUi.trackCount(saved))
-                    : str("morphe_music_downloads_playlist_complete_with_failures",
+                    ? str("morphe_music_downloads_playlist_download_complete", OfflineUi.trackCount(saved))
+                    : str("morphe_music_downloads_playlist_download_complete_with_failures",
                             OfflineUi.trackCount(saved), OfflineUi.trackCount(failed)));
         } catch (Exception ex) {
             Logger.printException(() -> "Playlist download failed", ex);
-            endWithMessage(str("morphe_music_downloads_playlist_stopped", done, OfflineUi.trackCount(total)));
+            endWithMessage(str("morphe_music_downloads_playlist_download_stopped", done,
+                    OfflineUi.trackCount(total)));
         } finally {
             running.set(false);
         }
@@ -261,8 +230,8 @@ public final class PlaylistDownloader {
 
         LocalDownloadManager.awaitNotificationSlot();
         LocalDownloadManager.showDownloadNotification(NOTIFICATION_KEY,
-                str("morphe_music_downloads_playlist_title"), done * 100 / total, true,
-                str("morphe_music_downloads_playlist_waiting_network"));
+                str("morphe_music_downloads_playlist_download_title"), done * 100 / total, true,
+                str("morphe_music_downloads_playlist_download_waiting_network"));
 
         final long giveUpTime = System.currentTimeMillis() + MAX_NETWORK_WAIT_MILLISECONDS;
         while (System.currentTimeMillis() < giveUpTime) {
@@ -278,13 +247,11 @@ public final class PlaylistDownloader {
         return false;
     }
 
-    /**
-     * Shows the result as a toast too, since the notification is not shown without the permission.
-     */
+    /** Shown as a toast too, for devices where notifications are off. */
     private static void endWithMessage(String message) {
         LocalDownloadManager.awaitNotificationSlot();
         LocalDownloadManager.showDownloadNotification(NOTIFICATION_KEY,
-                str("morphe_music_downloads_playlist_title"), 100, false, message);
+                str("morphe_music_downloads_playlist_download_title"), 100, false, message);
         Utils.showToastShort(message);
     }
 }

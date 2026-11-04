@@ -11,6 +11,7 @@ import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLa
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.cloneParameters
+import app.morphe.patches.music.misc.auth.authHookPatch
 import app.morphe.patches.music.misc.settings.PreferenceScreen
 import app.morphe.patches.music.misc.settings.settingsPatch
 import app.morphe.patches.music.shared.Constants.COMPATIBILITY_YOUTUBE_MUSIC
@@ -21,8 +22,6 @@ import app.morphe.patches.shared.misc.settings.preference.PreferenceScreenPrefer
 import app.morphe.patches.shared.misc.settings.preference.SwitchPreference
 import app.morphe.patches.shared.misc.settings.preference.TextPreference
 import app.morphe.patches.shared.misc.textcomponent.hookSpannableString
-import app.morphe.patches.shared.misc.request.buildRequestPatch
-import app.morphe.patches.shared.misc.request.hookBuildRequest
 import app.morphe.patches.shared.misc.textcomponent.textComponentPatch
 import app.morphe.util.addInstructionsAtControlFlowLabel
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
@@ -92,15 +91,16 @@ private const val EXTENSION_PROTOCOL_BUFFER_INTERFACE =
 @Suppress("unused")
 val downloadsPatch = bytecodePatch(
     name = "Downloads",
-    description = "Adds support to download songs using the in-app download button, " +
-        "either with an external downloader app or inside YouTube Music.",
+    description = "Adds support to download songs, albums and playlists using the in-app " +
+        "download button, either with an external downloader app or inside YouTube Music.",
 ) {
     dependsOn(
         downloadsResourcePatch,
         settingsPatch,
         textComponentPatch,
         musicVideoInformationPatch,
-        buildRequestPatch
+        // Liked music and private playlists are listed with the account of the app.
+        authHookPatch
     )
 
     compatibleWith(COMPATIBILITY_YOUTUBE_MUSIC)
@@ -146,12 +146,7 @@ val downloadsPatch = bytecodePatch(
         }
 
         OfflinePlaylistEndpointFingerprint.method.apply {
-            // The command holds the offline playlist endpoint, read from its buffer.
-            val commandClass = mutableClassDefBy(parameterTypes[0].toString())
-            if (commandClass.interfaces.none { it == EXTENSION_PROTOCOL_BUFFER_INTERFACE }) {
-                commandClass.interfaces.add(EXTENSION_PROTOCOL_BUFFER_INTERFACE)
-            }
-
+            // The command is the one the resolver hook above gave the buffer interface to.
             // v0 is set before it is read at the start of the method.
             addInstructionsWithLabels(
                 0,
@@ -165,9 +160,6 @@ val downloadsPatch = bytecodePatch(
                 """
             )
         }
-
-        // Liked music and private playlists are listed with the account of the app.
-        hookBuildRequest("$EXTENSION_CLASS->setRequestHeaders")
 
         // Accounts offered Premium get an upsell command from the Download option instead.
         offlineUpsellCommandFingerprint(

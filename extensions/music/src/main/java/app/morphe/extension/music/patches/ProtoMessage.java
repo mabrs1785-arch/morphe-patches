@@ -27,6 +27,8 @@ final class ProtoMessage {
     private static final int WIRE_FIXED64 = WireFormat.WIRETYPE_FIXED64;
     static final int WIRE_LENGTH_DELIMITED = WireFormat.WIRETYPE_LENGTH_DELIMITED;
     private static final int WIRE_FIXED32 = WireFormat.WIRETYPE_FIXED32;
+    /** Nesting beyond this is not a command. */
+    private static final int MAX_TEXT_FIELD_DEPTH = 8;
     static final ProtoMessage EMPTY = new ProtoMessage(new byte[0]);
     private final byte[] data;
     private final int start;
@@ -85,8 +87,6 @@ final class ProtoMessage {
         return texts;
     }
 
-    private static final int MAX_TEXT_FIELD_DEPTH = 8;
-
     private void collectTextFields(List<String> texts, int depth) {
         if (depth > MAX_TEXT_FIELD_DEPTH) return;
         CodedInputStream input = CodedInputStream.newInstance(data, start, end - start);
@@ -94,7 +94,10 @@ final class ProtoMessage {
             for (int tag; (tag = input.readTag()) != 0;) {
                 int wireType = WireFormat.getTagWireType(tag);
                 if (wireType != WIRE_LENGTH_DELIMITED) {
-                    if (wireType != WIRE_VARINT && wireType != WIRE_FIXED64 && wireType != WIRE_FIXED32) return;
+                    if (wireType != WIRE_VARINT && wireType != WIRE_FIXED64
+                            && wireType != WIRE_FIXED32) {
+                        return;
+                    }
                     input.skipField(tag);
                     continue;
                 }

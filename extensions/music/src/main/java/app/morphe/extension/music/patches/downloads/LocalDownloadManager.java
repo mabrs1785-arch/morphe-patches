@@ -74,10 +74,6 @@ public final class LocalDownloadManager {
     /** A range that makes no progress this many times in a row is treated as stalled. */
     private static final int MAX_STALLED_ATTEMPTS = 4;
 
-    /** How long a track of a playlist waits for the same track downloaded on its own. */
-    private static final long MAX_WAIT_FOR_OTHER_DOWNLOAD_MILLISECONDS = 5 * 60 * 1000;
-    private static final long OTHER_DOWNLOAD_POLL_MILLISECONDS = 1000;
-
     private static final Pattern VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{1,20}");
 
     private static final String THUMBNAIL_URL = "https://i.ytimg.com/vi/";
@@ -125,17 +121,9 @@ public final class LocalDownloadManager {
             Logger.printDebug(() -> "Skipping playlist entry with an unusable id: " + videoId);
             return false;
         }
-        // The track can be downloaded on its own at the same time, and then it is not failed.
-        final long giveUpTime = System.currentTimeMillis() + MAX_WAIT_FOR_OTHER_DOWNLOAD_MILLISECONDS;
-        while (ACTIVE_DOWNLOADS.contains(videoId) && System.currentTimeMillis() < giveUpTime) {
-            try {
-                //noinspection BusyWait
-                Thread.sleep(OTHER_DOWNLOAD_POLL_MILLISECONDS);
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
-        }
+        // Being saved by a single download of its own.
+        if (ACTIVE_DOWNLOADS.contains(videoId)) return true;
+
         return downloadBlocking(videoId, null, null, null, 0, null, true);
     }
 
@@ -222,7 +210,8 @@ public final class LocalDownloadManager {
             return true;
         } catch (Exception ex) {
             if (quiet) {
-                // A playlist can have many unavailable tracks, and an exception would show a toast for each.
+                // A playlist can have many unavailable tracks, and an exception would show a
+                // toast for each.
                 Logger.printInfo(() -> "Playlist track download failed: " + videoId, ex);
                 return false;
             }

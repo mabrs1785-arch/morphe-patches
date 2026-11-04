@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import app.morphe.extension.shared.Logger;
+
 /**
  * Reads protobuf fields on demand. Absent fields return empty values or zero for varints.
  * Field reads throw {@link IllegalArgumentException} for detected malformed wire data, unsupported wire types,
@@ -109,15 +111,15 @@ final class ProtoMessage {
                 field.collectTextFields(texts, depth + 1);
             }
         } catch (IOException | RuntimeException ex) {
-            // Not an error: text that is not a message cannot be read as one, and the fields
-            // read before it are kept.
+            // Text is also read as a message in case it is one. The fields read so far are kept.
+            Logger.printDebug(() -> "Not a message, keeping the fields read so far", ex);
         }
     }
 
     private boolean isPrintableText() {
         if (isEmpty()) return false;
         for (int i = start; i < end; i++) {
-            if (data[i] < 0x20 || data[i] > 0x7E) return false;
+            if (data[i] < ' ' || data[i] > '~') return false;
         }
         return true;
     }

@@ -208,7 +208,9 @@ public final class DownloadsPatch {
         if (value.isEmpty() || VIDEO_ID.matcher(value).matches()) return value;
 
         try {
-            return new ProtoMessage(Base64.decode(Uri.decode(value), Base64.URL_SAFE)).stringField(4);
+            String videoId = new ProtoMessage(Base64.decode(Uri.decode(value), Base64.URL_SAFE))
+                    .stringField(4);
+            return VIDEO_ID.matcher(videoId).matches() ? videoId : "";
         } catch (IllegalArgumentException ex) {
             // The parameters of a playlist are not encoded like the ones of a song.
             Logger.printDebug(() -> "Offline upsell parameters are not those of a song", ex);

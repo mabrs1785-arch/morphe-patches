@@ -494,16 +494,21 @@ public final class LocalDownloadManager {
     @SuppressLint("NotificationPermission") // The patch declares POST_NOTIFICATIONS.
     private static void postDownloadNotification(String key, String title, int progress,
                                                  boolean ongoing, String text) {
-        Context context = Utils.getContext();
-        NotificationManager manager =
-                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        NotificationManager manager = (NotificationManager)
+                Utils.getContext().getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) return;
 
+        manager.notify(key.hashCode(), downloadNotification(manager, title, progress, ongoing, text));
+    }
+
+    /** The channel is created on the way, which does nothing once it exists. */
+    static Notification downloadNotification(NotificationManager manager, String title,
+                                             int progress, boolean ongoing, String text) {
         manager.createNotificationChannel(new NotificationChannel(DOWNLOAD_CHANNEL,
                 str("morphe_music_downloads_notification_channel"),
                 NotificationManager.IMPORTANCE_LOW));
 
-        Notification.Builder builder = new Notification.Builder(context, DOWNLOAD_CHANNEL);
+        Notification.Builder builder = new Notification.Builder(Utils.getContext(), DOWNLOAD_CHANNEL);
         builder.setSmallIcon(ongoing
                         ? android.R.drawable.stat_sys_download
                         : android.R.drawable.stat_sys_download_done)
@@ -513,7 +518,7 @@ public final class LocalDownloadManager {
                 .setOnlyAlertOnce(true);
 
         if (ongoing) builder.setProgress(100, Math.max(0, progress), progress < 0);
-        manager.notify(key.hashCode(), builder.build());
+        return builder.build();
     }
 
     @Nullable

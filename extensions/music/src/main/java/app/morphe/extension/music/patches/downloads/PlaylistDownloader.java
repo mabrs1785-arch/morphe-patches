@@ -29,7 +29,7 @@ import app.morphe.extension.shared.ui.CustomDialog;
 public final class PlaylistDownloader {
 
     /** Key of the single notification that shows the progress of the playlist. */
-    private static final String NOTIFICATION_KEY = "morphe_playlist_download";
+    static final String NOTIFICATION_KEY = "morphe_playlist_download";
 
     /** Rough size of a track, only used to tell how much space the playlist needs. */
     private static final long AVERAGE_TRACK_BYTES = 4L * 1024 * 1024;
@@ -156,13 +156,14 @@ public final class PlaylistDownloader {
                     }
                     Utils.showToastShort(str("morphe_music_downloads_playlist_download_started",
                             OfflineUi.trackCount(missing.size())));
-                    Utils.runOnBackgroundThread(() -> downloadAll(missing));
+                    PlaylistDownloadService.start(activity, missing);
                 },
                 () -> {
                 }, null, null, true).first.show();
     }
 
-    private static void downloadAll(List<String> videoIds) {
+    /** Runs in the download service, off the main thread. */
+    static void downloadAll(List<String> videoIds) {
         final int total = videoIds.size();
         int saved = 0;
         int failed = 0;

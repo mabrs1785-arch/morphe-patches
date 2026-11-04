@@ -225,7 +225,7 @@ They are downloaded one at a time, which can take a long time and needs about %3
     <string name="morphe_music_downloads_playlist_download_complete">%s downloaded</string>
     <string name="morphe_music_downloads_playlist_download_complete_with_failures">%1$s downloaded, %2$s could not be downloaded</string>
     <string name="morphe_music_downloads_playlist_download_already_running">Playlist download already in progress</string>
-    <string name="morphe_music_downloads_playlist_download_needs_account">Your account was not detected yet. Play a song, then tap Download again</string>
+    <string name="morphe_music_downloads_playlist_download_needs_account">Your account is not known yet. Try again in a moment</string>
     <string name="morphe_music_downloads_playlist_download_listed_all_saved">%s listed, all already downloaded</string>
     <string name="morphe_music_downloads_playlist_download_incomplete">Only part of the playlist could be listed. Tap Download again later to get the rest</string>
     <string name="morphe_music_downloads_playlist_download_started">Downloading %s in the background</string>

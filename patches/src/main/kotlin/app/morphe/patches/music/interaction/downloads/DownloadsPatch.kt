@@ -30,11 +30,14 @@ private val OFFLINE_PLAYBACK_PERMISSIONS = listOf(
     "android.permission.WAKE_LOCK",
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+    "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
     "android.permission.POST_NOTIFICATIONS",
 )
 
 private const val OFFLINE_PLAYBACK_SERVICE =
     "app.morphe.extension.music.patches.downloads.OfflinePlaybackService"
+private const val PLAYLIST_DOWNLOAD_SERVICE =
+    "app.morphe.extension.music.patches.downloads.PlaylistDownloadService"
 
 private val downloadsResourcePatch = resourcePatch {
     dependsOn(settingsPatch)
@@ -76,6 +79,15 @@ private val downloadsResourcePatch = resourcePatch {
                 "</application>",
                 "<service android:name=\"$OFFLINE_PLAYBACK_SERVICE\" " +
                     "android:exported=\"false\" android:foregroundServiceType=\"mediaPlayback\" />\n</application>"
+            )
+        }
+
+        // The tracks of a playlist are downloaded by a service, so the download outlives the app.
+        if (!xml.contains(PLAYLIST_DOWNLOAD_SERVICE)) {
+            xml = xml.replace(
+                "</application>",
+                "<service android:name=\"$PLAYLIST_DOWNLOAD_SERVICE\" " +
+                    "android:exported=\"false\" android:foregroundServiceType=\"dataSync\" />\n</application>"
             )
         }
 

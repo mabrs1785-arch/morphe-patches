@@ -76,6 +76,7 @@ public final class LocalDownloadManager {
 
     /** How long a track of a playlist waits for the same track downloaded on its own. */
     private static final long MAX_WAIT_FOR_OTHER_DOWNLOAD_MILLISECONDS = 5 * 60 * 1000;
+    private static final long OTHER_DOWNLOAD_POLL_MILLISECONDS = 1000;
 
     private static final Pattern VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{1,20}");
 
@@ -129,7 +130,7 @@ public final class LocalDownloadManager {
         while (ACTIVE_DOWNLOADS.contains(videoId) && System.currentTimeMillis() < giveUpTime) {
             try {
                 //noinspection BusyWait
-                Thread.sleep(1000);
+                Thread.sleep(OTHER_DOWNLOAD_POLL_MILLISECONDS);
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
                 return false;

@@ -324,6 +324,7 @@ public final class DownloadsPatch {
                 videoId = getOfflineUpsellVideoId(commandBytes);
             } catch (IllegalArgumentException ex) {
                 // The parameters of a playlist are not encoded like the ones of a song.
+                Logger.printDebug(() -> "Offline upsell parameters are not those of a song", ex);
                 videoId = "";
             }
             if (!videoId.isEmpty()) return onMenuDownload(videoId);

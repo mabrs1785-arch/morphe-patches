@@ -9,7 +9,6 @@ package app.morphe.extension.music.patches.downloads;
 
 import android.os.Build;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.json.JSONArray;
@@ -80,7 +79,6 @@ final class PlaylistTracksRequest {
             USER_AGENT_HEADER
     );
 
-    @NonNull
     private static volatile Map<String, String> appHeaders = Collections.emptyMap();
 
     private static final int CONNECT_TIMEOUT_MILLISECONDS = 10_000;
@@ -121,12 +119,12 @@ final class PlaylistTracksRequest {
 
     /**
      * @param browseId Browse id of the playlist page, such as 'VLLM' for Liked music,
-     *                 or 'MPREb_…' for an album.
+     *                 or 'MPREb_...' for an album.
      * @param progress Told the number of tracks listed so far after each page.
      * @return The tracks, {@link #NEEDS_ACCOUNT}, or null if the first page could not be loaded.
      */
     @Nullable
-    static Result fetchVideoIds(@NonNull String browseId, @Nullable PageCallback progress) {
+    static Result fetchVideoIds(String browseId, @Nullable PageCallback progress) {
         // Liked music is always empty without the account.
         final boolean needsAccount = browseId.equals("VLLM");
 
@@ -400,7 +398,7 @@ final class PlaylistTracksRequest {
 
     @Nullable
     private static JSONObject send(JSONObject body, boolean asApp) {
-        final byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
 
         for (int attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
             HttpURLConnection connection = null;

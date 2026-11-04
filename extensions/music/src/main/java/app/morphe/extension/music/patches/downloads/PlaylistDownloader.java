@@ -15,7 +15,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.text.format.Formatter;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
@@ -65,9 +64,9 @@ public final class PlaylistDownloader {
 
     /**
      * @param playlistId Id of the playlist or the album, such as 'LM' for Liked music,
-     *                   'OLAK5uy_…' for the playlist of an album, or the 'MPREb_…' browse id of an album.
+     *                   'OLAK5uy_...' for the playlist of an album, or the 'MPREb_...' browse id of an album.
      */
-    public static void start(@NonNull String playlistId) {
+    public static void start(String playlistId) {
         // Listing the tracks retries for a long while before it gives up without the network.
         if (!Utils.isNetworkConnected()) {
             Utils.showToastShort(str("morphe_music_downloads_playlist_waiting_network"));

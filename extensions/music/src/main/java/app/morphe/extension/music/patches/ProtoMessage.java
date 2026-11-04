@@ -105,8 +105,9 @@ final class ProtoMessage {
                 if (field.isPrintableText()) texts.add(field.utf8Text());
                 field.collectTextFields(texts, depth + 1);
             }
-        } catch (IOException | RuntimeException ignored) {
-            // Text that is read as a message ends here, and the fields read so far are kept.
+        } catch (IOException | RuntimeException ex) {
+            // Not an error: text that is not a message cannot be read as one, and the fields
+            // read before it are kept.
         }
     }
 

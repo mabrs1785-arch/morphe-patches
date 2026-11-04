@@ -7,18 +7,14 @@
 
 package app.morphe.extension.music.patches.downloads;
 
-import android.content.ComponentCallbacks2;
-import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.Process;
 import android.util.LruCache;
 import android.widget.ImageView;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
-import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -26,12 +22,8 @@ import app.morphe.extension.shared.Logger;
 import app.morphe.extension.shared.Utils;
 
 /**
- * Decodes the covers of the downloads screen off the main thread.
- * <p>
- * The catalogue can hold thousands of tracks, and decoding a cover for every one of them while
- * the screen is built blocks the app long enough for the system to close it. Covers are only
- * decoded for the rows that are shown, the most recent request first, and kept in a small cache
- * for scrolling back.
+ * Decodes the covers of the downloads screen off the main thread, a few at a time, and keeps
+ * the last ones for scrolling back.
  */
 final class OfflineArtworkLoader {
 
@@ -52,22 +44,12 @@ final class OfflineArtworkLoader {
     };
 
     /**
-     * Requests of a list that reuses its rows are last in, first out, so the rows a fast scroll
-     * stops on are decoded before the rows it passed. Requests of rows that were reused for another
-     * track by then are dropped unread. Pages that build all their rows at once, top to bottom,
-     * are decoded in that order instead.
+     * Requests of rows that were reused for another track by the time their turn comes are
+     * dropped unread, so a fast scroll costs little.
      */
     private static final ThreadPoolExecutor decoder = new ThreadPoolExecutor(
             DECODE_THREADS, DECODE_THREADS, IDLE_THREAD_SECONDS, TimeUnit.SECONDS,
-            new LinkedBlockingDeque<Runnable>() {
-                @Override
-                public boolean offer(Runnable task) {
-                    if (task instanceof DecodeTask decode && !decode.newestFirst) {
-                        return offerLast(task);
-                    }
-                    return offerFirst(task);
-                }
-            },
+            new LinkedBlockingQueue<>(),
             task -> {
                 Thread thread = new Thread(() -> {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
@@ -79,40 +61,7 @@ final class OfflineArtworkLoader {
 
     static {
         decoder.allowCoreThreadTimeOut(true);
-        registerMemoryCallbacks();
     }
-
-    /**
-     * The cache is static, and the player keeps the process alive in the background, so the
-     * covers are let go once the screens of the app are hidden, or when memory runs low.
-     */
-    private static void registerMemoryCallbacks() {
-        try {
-            Utils.getContext().registerComponentCallbacks(new ComponentCallbacks2() {
-                @Override
-                public void onTrimMemory(int level) {
-                    if (level >= TRIM_MEMORY_UI_HIDDEN) {
-                        cache.evictAll();
-                    } else if (level >= TRIM_MEMORY_RUNNING_LOW) {
-                        cache.trimToSize(cache.maxSize() / 2);
-                    }
-                }
-
-                @Override
-                public void onConfigurationChanged(Configuration configuration) {
-                }
-
-                @Override
-                public void onLowMemory() {
-                    cache.evictAll();
-                }
-            });
-        } catch (Exception ex) {
-            Logger.printException(() -> "Could not register the memory callbacks", ex);
-        }
-    }
-
-    private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private OfflineArtworkLoader() {
     }
@@ -125,13 +74,10 @@ final class OfflineArtworkLoader {
      * be decoding, so the view is tagged with the cover it waits for, and a result is only shown
      * by a view that still waits for it.
      *
-     * @param maxSize     Longest edge to decode, in pixels.
-     * @param newestFirst If this request goes before the ones already waiting, which suits a list
-     *                    that reuses its rows. Otherwise requests are decoded in the order made.
+     * @param size Side of the square the cover fills, in pixels.
      */
-    static void load(ImageView view, File artworkFile, int maxSize, OfflineUi ui,
-                     boolean newestFirst) {
-        String key = artworkFile.getAbsolutePath() + '@' + maxSize;
+    static void load(ImageView view, File artworkFile, int size, OfflineUi ui) {
+        String key = artworkFile.getAbsolutePath() + '@' + size;
 
         Bitmap cached = cache.get(key);
         if (cached != null) {
@@ -146,7 +92,7 @@ final class OfflineArtworkLoader {
 
         view.setTag(key);
         ui.showArtwork(view, null);
-        decoder.execute(new DecodeTask(view, artworkFile, maxSize, key, ui, newestFirst));
+        decoder.execute(new DecodeTask(view, artworkFile, size, key, ui));
     }
 
     /**
@@ -170,19 +116,16 @@ final class OfflineArtworkLoader {
         /** Weak, so a request still queued does not keep a closed screen in memory. */
         private final WeakReference<ImageView> target;
         private final File artworkFile;
-        private final int maxSize;
+        private final int size;
         private final String key;
         private final OfflineUi owner;
-        private final boolean newestFirst;
 
-        DecodeTask(ImageView view, File artworkFile, int maxSize, String key, OfflineUi owner,
-                   boolean newestFirst) {
+        DecodeTask(ImageView view, File artworkFile, int size, String key, OfflineUi owner) {
             this.target = new WeakReference<>(view);
             this.artworkFile = artworkFile;
-            this.maxSize = maxSize;
+            this.size = size;
             this.key = key;
             this.owner = owner;
-            this.newestFirst = newestFirst;
         }
 
         @Override
@@ -194,22 +137,21 @@ final class OfflineArtworkLoader {
                 Bitmap bitmap = cache.get(key);
                 if (bitmap == null) {
                     // Rows and the mini player crop the cover to a square.
-                    bitmap = OfflineStorage.decodeSquareArtwork(artworkFile, maxSize);
+                    bitmap = OfflineStorage.decodeSquareArtwork(artworkFile, size);
                     // A track saved without a cover keeps the placeholder.
                     if (bitmap == null) return;
                     cache.put(key, bitmap);
                 }
 
                 Bitmap decoded = bitmap;
-                mainHandler.post(() -> {
+                Utils.runOnMainThread(() -> {
                     ImageView shown = target.get();
                     if (shown != null && key.equals(shown.getTag())) {
                         owner.showArtwork(shown, decoded);
                     }
                 });
-            } catch (Throwable ex) {
-                // A cover that cannot be decoded, even for lack of memory, only costs its row
-                // the placeholder.
+            } catch (Exception ex) {
+                // A cover that cannot be decoded only costs its row the placeholder.
                 Logger.printException(() -> "Could not decode cover: " + artworkFile, ex);
             }
         }

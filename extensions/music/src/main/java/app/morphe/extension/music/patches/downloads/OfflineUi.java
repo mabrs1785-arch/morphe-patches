@@ -101,11 +101,12 @@ final class OfflineUi {
         return button;
     }
 
-    ImageView artworkView(@Nullable Bitmap bitmap) {
+    /** A cover view showing the placeholder, for {@link OfflineArtworkLoader} to fill. */
+    ImageView artworkView() {
         ImageView view = new ImageView(context);
         view.setBackgroundColor(Utils.adjustColorBrightness(foreground(), 0.2f));
         roundCorners(view);
-        showArtwork(view, bitmap);
+        showArtwork(view, null);
         return view;
     }
 
@@ -168,29 +169,17 @@ final class OfflineUi {
     }
 
     /** The views that show a track in a row, kept so a reused row can show another track. */
-    static final class TrackInfoViews {
-        final ImageView artwork;
-        final TextView title;
-        final TextView detail;
-
-        TrackInfoViews(ImageView artwork, TextView title, TextView detail) {
-            this.artwork = artwork;
-            this.title = title;
-            this.detail = detail;
-        }
+    record TrackInfoViews(ImageView artwork, TextView title, TextView detail) {
     }
 
-    /**
-     * Adds the cover, title and details of a track to its row, for pages that build every row at
-     * once, top to bottom, so their covers are decoded in that order.
-     */
+    /** Adds the cover, title and details of a track to its row. */
     void addTrackInfo(LinearLayout row, OfflineTrack track) {
-        bindTrackInfo(createTrackInfo(row), track, false);
+        bindTrackInfo(createTrackInfo(row), track);
     }
 
     /** Adds empty views for the cover, title and details of a track to a row. */
     TrackInfoViews createTrackInfo(LinearLayout row) {
-        ImageView artwork = artworkView(null);
+        ImageView artwork = artworkView();
         row.addView(artwork, new LinearLayout.LayoutParams(dp(ROW_ARTWORK_DP), dp(ROW_ARTWORK_DP)));
 
         LinearLayout labels = new LinearLayout(context);
@@ -209,19 +198,11 @@ final class OfflineUi {
         return new TrackInfoViews(artwork, name, detail);
     }
 
-    /**
-     * Shows a track in views made by {@link #createTrackInfo}, for a list that reuses its rows.
-     * The cover is decoded later, the rows shown last first.
-     */
+    /** Shows a track in views made by {@link #createTrackInfo}. The cover is decoded later. */
     void bindTrackInfo(TrackInfoViews views, OfflineTrack track) {
-        bindTrackInfo(views, track, true);
-    }
-
-    private void bindTrackInfo(TrackInfoViews views, OfflineTrack track, boolean newestFirst) {
-        OfflineArtworkLoader.load(views.artwork, track.artworkFile(), rowArtworkPixels(), this,
-                newestFirst);
-        views.title.setText(track.displayTitle());
-        views.detail.setText(str("morphe_music_downloads_track_subtitle",
+        OfflineArtworkLoader.load(views.artwork(), track.artworkFile(), rowArtworkPixels(), this);
+        views.title().setText(track.displayTitle());
+        views.detail().setText(str("morphe_music_downloads_track_subtitle",
                 track.displayArtist(), formatDuration(track.durationSeconds()),
                 formatSize(track.sizeBytes())));
     }

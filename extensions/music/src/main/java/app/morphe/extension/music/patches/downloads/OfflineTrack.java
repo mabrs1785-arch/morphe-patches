@@ -73,11 +73,6 @@ public record OfflineTrack(String videoId, String title, String artist, String a
         }
     }
 
-    @Nullable
-    public Bitmap artwork(int maxSize) {
-        return OfflineStorage.decodeArtwork(artworkFile, maxSize);
-    }
-
     public String displayTitle() {
         return title.isBlank() ? videoId : title;
     }

@@ -150,12 +150,6 @@ public final class OfflinePlaybackService extends Service {
      */
     private static final int ARTWORK_PIXELS = 640;
 
-    /**
-     * How many tracks deleted since the queue was made are passed over before giving up, so
-     * that skipping does not hold the main thread checking thousands of files.
-     */
-    private static final int MAX_MISSING_TRACKS_SKIPPED = 200;
-
     private MediaPlayer player;
     private boolean prepared;
     private MediaSession session;
@@ -209,10 +203,6 @@ public final class OfflinePlaybackService extends Service {
         if (ACTION_PLAY_FILE.equals(action)) {
             // The request was made with startForegroundService, so the service has to reach the
             // foreground before anything can stop it, or the system closes the app.
-            String requestedTitle = intent.getStringExtra(EXTRA_TITLE);
-            String requestedArtist = intent.getStringExtra(EXTRA_ARTIST);
-            if (requestedTitle != null) title = requestedTitle;
-            if (requestedArtist != null && !requestedArtist.isBlank()) artist = requestedArtist;
             startForeground(NOTIFICATION_ID, notification());
 
             // A newer request has replaced the queue of this one, and follows right behind.
@@ -224,8 +214,8 @@ public final class OfflinePlaybackService extends Service {
                 queue = suppliedQueue;
                 queueIndex = pendingQueueIndex;
             }
-            playFile(intent.getStringExtra(EXTRA_PATH), requestedTitle, requestedArtist,
-                    intent.getStringExtra(EXTRA_ARTWORK_PATH));
+            playFile(intent.getStringExtra(EXTRA_PATH), intent.getStringExtra(EXTRA_TITLE),
+                    intent.getStringExtra(EXTRA_ARTIST), intent.getStringExtra(EXTRA_ARTWORK_PATH));
         } else if (ACTION_TOGGLE.equals(action)) {
             if (playerReady() && player.isPlaying()) pause(); else resume();
         } else if (ACTION_STOP.equals(action)) {
@@ -311,9 +301,7 @@ public final class OfflinePlaybackService extends Service {
     private boolean playQueueOffset(int offset) {
         if (queueIndex < 0) return false;
         int target = queueIndex + offset;
-        int skipped = 0;
         while (target >= 0 && target < queue.size() && !new File(queue.get(target)).isFile()) {
-            if (++skipped > MAX_MISSING_TRACKS_SKIPPED) return false;
             target += offset;
         }
         if (target < 0 || target >= queue.size()) return false;
@@ -497,10 +485,10 @@ public final class OfflinePlaybackService extends Service {
                     .putString(MediaMetadata.METADATA_KEY_TITLE, title)
                     .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
                     .putLong(MediaMetadata.METADATA_KEY_DURATION, currentDuration);
-            // One key is enough for the lock screen and the notification, and each key stored
-            // is another copy the system makes.
             if (artwork != null) {
-                metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork);
+                metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
+                        .putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
+                        .putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork);
             }
             currentSession.setMetadata(metadata.build());
         }

@@ -30,6 +30,12 @@ import app.morphe.extension.shared.Logger;
  */
 final class OfflineStorage {
 
+    /**
+     * A sampled cover is kept when it is at most this much larger than asked, since scaling it
+     * down further costs a second bitmap for little memory.
+     */
+    private static final float MAX_OVERSIZE = 1.25f;
+
     private OfflineStorage() {
     }
 
@@ -57,12 +63,6 @@ final class OfflineStorage {
             bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output);
         }
     }
-
-    /**
-     * A sampled cover is kept when it is at most this much larger than asked, since scaling it
-     * down further costs a second bitmap for little memory.
-     */
-    private static final float MAX_OVERSIZE = 1.25f;
 
     /**
      * Covers are stored large, mostly as 16:9 video thumbnails, so a sample is decoded rather

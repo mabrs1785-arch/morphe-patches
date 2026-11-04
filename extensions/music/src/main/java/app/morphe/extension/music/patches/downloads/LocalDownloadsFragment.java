@@ -33,9 +33,6 @@ import android.graphics.drawable.ShapeDrawable;
 import android.graphics.drawable.shapes.OvalShape;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.Handler;
-import android.os.Looper;
-import android.os.Process;
 import android.preference.PreferenceFragment;
 import android.util.Pair;
 import android.view.Gravity;
@@ -43,7 +40,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.AbsListView;
 import android.widget.ArrayAdapter;
 import android.widget.BaseAdapter;
 import android.widget.CheckBox;
@@ -116,54 +112,8 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     private static final int EMPTY_TOP_PADDING_DP = 80;
     private static final int LOADING_INDICATOR_DP = 40;
 
-    /** How long the scroll thumb stays once the list has stopped moving. */
-    private static final long FAST_SCROLL_THUMB_MILLISECONDS = 3000;
-
     /** Downloads can finish every second, so the list is refreshed a moment after the last. */
     private static final long REFRESH_DELAY_MILLISECONDS = 2000;
-
-    /** Guards {@link #cachedCatalogue} and {@link #catalogueEdits}. */
-    private static final Object catalogueLock = new Object();
-
-    /**
-     * The catalogue read last. The screen is a new activity every time it is opened, and reading
-     * thousands of tracks takes seconds, so it is shown again at once and only read again when
-     * the folder has changed, and then only the files it did not have are read.
-     */
-    @Nullable
-    private static CatalogueSnapshot cachedCatalogue;
-
-    /**
-     * Counts the changes made from the screen, so a read that began before one of them does
-     * not undo it with what the folder held at the time.
-     */
-    private static int catalogueEdits;
-
-    /**
-     * The tracks read from a folder, with what tells whether the folder changed since.
-     *
-     * @param modified   Last modification time of the folder, which changes when a file is
-     *                   added, renamed or removed. -1 forces the folder to be read again.
-     * @param audioFiles Number of audio files, in case two changes share a modification time.
-     */
-    private record CatalogueSnapshot(String directory, long modified, int audioFiles,
-                                     List<OfflineTrack> tracks) {
-    }
-
-    @Nullable
-    private static CatalogueSnapshot cachedCatalogue() {
-        synchronized (catalogueLock) {
-            return cachedCatalogue;
-        }
-    }
-
-    /** Records a change made from the screen, which replaces whatever was read before it. */
-    private static void catalogueEdited(@Nullable CatalogueSnapshot replacement) {
-        synchronized (catalogueLock) {
-            catalogueEdits++;
-            cachedCatalogue = replacement;
-        }
-    }
 
     private File musicRoot;
     private OfflineUi ui;
@@ -202,12 +152,10 @@ public final class LocalDownloadsFragment extends PreferenceFragment
 
     /** Every downloaded track, sorted, as read by the last load. */
     private List<OfflineTrack> tracks = new ArrayList<>();
-
-    /** The same tracks by the path of their audio file. */
     private final Map<String, OfflineTrack> tracksByPath = new HashMap<>();
     private long totalBytes;
 
-    /** The tracks that match the search, in the order of the list. */
+    /** The tracks that match the search. */
     private final List<OfflineTrack> displayedTracks = new ArrayList<>();
 
     /** Paths of {@link #displayedTracks}, the queue that playing from the list moves through. */
@@ -215,16 +163,11 @@ public final class LocalDownloadsFragment extends PreferenceFragment
 
     /** Lets a load that finishes after the screen was closed, or reloaded, be ignored. */
     private int loadGeneration;
-    /** If the first catalogue is still being read, with nothing to show meanwhile. */
-    private boolean loading;
     /** If a read of the folder is under way, so another is not started on top of it. */
     private boolean reading;
     /** The snapshot the list shows, so the same one is not sorted and drawn again. */
     @Nullable
-    private CatalogueSnapshot appliedSnapshot;
-    private boolean resumedBefore;
-
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private OfflineCatalogue.Snapshot appliedSnapshot;
 
     /** Lists the downloads that finished while the screen is open. */
     private final Runnable refresh = () -> {
@@ -275,8 +218,6 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         miniPlayer = createStockMiniPlayer();
         miniPlayer.setVisibility(View.GONE);
         root.addView(miniPlayer, new LinearLayout.LayoutParams(-1, -2));
-
-        loadCatalogue();
         return root;
     }
 
@@ -288,23 +229,22 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     }
 
     private void scheduleRefresh() {
-        mainHandler.removeCallbacks(refresh);
-        mainHandler.postDelayed(refresh, REFRESH_DELAY_MILLISECONDS);
+        root.removeCallbacks(refresh);
+        root.postDelayed(refresh, REFRESH_DELAY_MILLISECONDS);
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        // Downloads that finished while the screen was away are listed on the way back. Only
-        // the files the catalogue did not have are read, so this is cheap when nothing changed.
-        if (resumedBefore && !reading) loadCatalogue();
-        resumedBefore = true;
+        // Also lists the downloads that finished while the screen was away. Only the files the
+        // catalogue did not have are read, so this is cheap when nothing changed.
+        if (!reading) loadCatalogue();
     }
 
     @Override
     public void onStop() {
         LocalDownloadManager.removeSavedListener(onTrackSaved);
-        mainHandler.removeCallbacks(refresh);
+        root.removeCallbacks(refresh);
         OfflinePlaybackService.removeListener(this);
         OfflineArtworkLoader.evictAll();
         super.onStop();
@@ -449,7 +389,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         OfflinePlaylistManager manager = playlistManager;
         reading = true;
 
-        CatalogueSnapshot shown = cachedCatalogue();
+        OfflineCatalogue.Snapshot shown = OfflineCatalogue.cached();
         final boolean showingCache = shown != null
                 && shown.directory().equals(directory.getAbsolutePath());
         if (showingCache) {
@@ -458,7 +398,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             setLoading(true);
         }
 
-        runOffMainThread(() -> {
+        Utils.runOnBackgroundThread(() -> {
             // The playlists are a few small files, so they are shown before the tracks are read.
             List<OfflinePlaylist> playlistsRead = null;
             try {
@@ -475,21 +415,21 @@ public final class LocalDownloadsFragment extends PreferenceFragment
                 });
             }
 
-            CatalogueSnapshot snapshot = null;
+            OfflineCatalogue.Snapshot snapshot = null;
             try {
-                snapshot = readCatalogue(directory);
+                snapshot = OfflineCatalogue.read(directory);
             } catch (Exception ex) {
                 Logger.printException(() -> "Could not read the downloads", ex);
             }
 
-            CatalogueSnapshot read = snapshot;
+            OfflineCatalogue.Snapshot read = snapshot;
             Utils.runOnMainThread(() -> {
                 if (generation != loadGeneration || getActivity() == null) return;
                 reading = false;
 
                 if (read == null) {
                     if (appliedSnapshot == null) applyCatalogue(null);
-                } else if (read != appliedSnapshot && read == cachedCatalogue()) {
+                } else if (read != appliedSnapshot && read == OfflineCatalogue.cached()) {
                     // Still what the folder holds: nothing was deleted from the screen meanwhile.
                     applyCatalogue(read);
                 }
@@ -499,87 +439,9 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     }
 
     /**
-     * The shared background threads run above the priority of the main thread, and reading
-     * thousands of files on one would slow the screen it is read for, so the work is demoted
-     * for as long as it lasts.
-     */
-    private static void runOffMainThread(Runnable task) {
-        Utils.runOnBackgroundThread(() -> {
-            final int tid = Process.myTid();
-            final int priority = Process.getThreadPriority(tid);
-            Process.setThreadPriority(tid, Process.THREAD_PRIORITY_BACKGROUND);
-            try {
-                task.run();
-            } finally {
-                Process.setThreadPriority(tid, priority);
-            }
-        });
-    }
-
-    /**
-     * Reuses the last catalogue read while the folder is unchanged, and the tracks it already
-     * had when it has. Runs off the main thread.
-     *
-     * @return The catalogue, or null when it could not be read or the screen changed it meanwhile.
-     */
-    @Nullable
-    private static CatalogueSnapshot readCatalogue(File directory) {
-        final int editsBefore;
-        CatalogueSnapshot cached;
-        synchronized (catalogueLock) {
-            editsBefore = catalogueEdits;
-            cached = cachedCatalogue;
-        }
-
-        // Read before listing, so a file added while listing makes the next visit read again.
-        final long modified = directory.lastModified();
-        String[] names = directory.list();
-        List<String> audioNames = new ArrayList<>();
-        if (names != null) {
-            for (String name : names) {
-                if (isAudioFile(name)) audioNames.add(name);
-            }
-        }
-
-        String path = directory.getAbsolutePath();
-        final boolean sameFolder = cached != null && cached.directory().equals(path);
-        if (sameFolder && cached.modified() == modified && cached.audioFiles() == audioNames.size()) {
-            return cached;
-        }
-
-        Map<String, OfflineTrack> known = new HashMap<>();
-        if (sameFolder) {
-            for (OfflineTrack track : cached.tracks()) {
-                known.put(track.audioFile().getName(), track);
-            }
-        }
-
-        List<OfflineTrack> loaded = new ArrayList<>(audioNames.size());
-        for (String name : audioNames) {
-            OfflineTrack track = known.get(name);
-            loaded.add(track != null ? track : OfflineTrack.load(new File(directory, name)));
-        }
-        CatalogueSnapshot snapshot = new CatalogueSnapshot(path, modified, audioNames.size(),
-                Collections.unmodifiableList(loaded));
-
-        synchronized (catalogueLock) {
-            // A track was deleted from the screen while the folder was read: what was read may
-            // still hold it, so it is dropped, and the folder is read again on the next visit.
-            if (catalogueEdits != editsBefore) return null;
-            cachedCatalogue = snapshot;
-        }
-        return snapshot;
-    }
-
-    /** By name only, since asking the file system about thousands of files takes seconds. */
-    private static boolean isAudioFile(String name) {
-        return name.endsWith(".webm") || name.endsWith(".m4a");
-    }
-
-    /**
      * @param snapshot The catalogue to show, or null for an empty one.
      */
-    private void applyCatalogue(@Nullable CatalogueSnapshot snapshot) {
+    private void applyCatalogue(@Nullable OfflineCatalogue.Snapshot snapshot) {
         appliedSnapshot = snapshot;
         List<OfflineTrack> sorted = snapshot == null
                 ? new ArrayList<>()
@@ -604,25 +466,14 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         totalBytes = total;
     }
 
-    /**
-     * Keeps the cached catalogue in line with a change made on this screen, so the next visit
-     * does not show it undone. The folder is still read again on that visit.
-     */
-    private void rememberCatalogueChange() {
-        CatalogueSnapshot edited = new CatalogueSnapshot(musicRoot.getAbsolutePath(), -1, -1,
-                Collections.unmodifiableList(new ArrayList<>(tracks)));
-        catalogueEdited(edited);
-        appliedSnapshot = edited;
-    }
-
     private void setLoading(boolean value) {
-        loading = value;
         loadingIndicator.setVisibility(value ? View.VISIBLE : View.GONE);
         updateEmptyView();
     }
 
     private void updateEmptyView() {
-        final boolean empty = !loading && displayedTracks.isEmpty();
+        final boolean empty = loadingIndicator.getVisibility() != View.VISIBLE
+                && displayedTracks.isEmpty();
         emptyView.setVisibility(empty ? View.VISIBLE : View.GONE);
         if (empty) {
             emptyView.setText(str(tracks.isEmpty()
@@ -741,34 +592,6 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         songsList.setItemsCanFocus(true);
         songsList.setPadding(ui.dp(8), 0, ui.dp(8), ui.dp(10));
         songsList.setClipToPadding(false);
-        // A long catalogue is crossed with the scroll thumb rather than by flinging for minutes.
-        // The thumb takes every touch along the right edge of a long list, even while hidden, so
-        // it only exists while the list moves and shortly after, and the buttons of the rows
-        // under it work again once the list is at rest.
-        songsList.setOnScrollListener(new AbsListView.OnScrollListener() {
-            private final Runnable hideThumb = () -> songsList.setFastScrollEnabled(false);
-
-            @Override
-            public void onScrollStateChanged(AbsListView view, int scrollState) {
-                if (scrollState == SCROLL_STATE_IDLE) {
-                    armHideThumb(view);
-                } else if (!view.isFastScrollEnabled()) {
-                    view.setFastScrollEnabled(true);
-                }
-            }
-
-            @Override
-            public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount,
-                                 int totalItemCount) {
-                // Dragging the thumb moves the list without a change of scroll state.
-                if (view.isFastScrollEnabled()) armHideThumb(view);
-            }
-
-            private void armHideThumb(AbsListView view) {
-                view.removeCallbacks(hideThumb);
-                view.postDelayed(hideThumb, FAST_SCROLL_THUMB_MILLISECONDS);
-            }
-        });
         adapter = new TrackAdapter();
         songsList.setAdapter(adapter);
         frame.addView(songsList, new FrameLayout.LayoutParams(-1, -1));
@@ -1005,8 +828,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         final ImageButton menu;
 
         /** Which card the row shows, so a redraw does not cut the ripple of a tap short. */
-        @Nullable
-        Boolean highlighted;
+        boolean highlighted;
 
         RowViews(LinearLayout row, CheckBox checkBox, OfflineUi.TrackInfoViews info,
                  ImageButton menu) {
@@ -1045,6 +867,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
 
     private RowViews createRow() {
         LinearLayout row = ui.trackRow();
+        row.setBackground(ui.rowBackground(false));
 
         CheckBox checkBox = new CheckBox(getActivity());
         checkBox.setButtonTintList(ColorStateList.valueOf(foreground()));
@@ -1078,7 +901,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         });
 
         final boolean highlighted = path.equals(playingPath);
-        if (views.highlighted == null || views.highlighted != highlighted) {
+        if (views.highlighted != highlighted) {
             views.highlighted = highlighted;
             views.row.setBackground(ui.rowBackground(highlighted));
         }
@@ -1106,7 +929,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         line.setGravity(Gravity.CENTER_VERTICAL);
         line.setPadding(ui.dp(16), 0, 0, 0);
 
-        miniArtwork = ui.artworkView(null);
+        miniArtwork = ui.artworkView();
         line.addView(miniArtwork, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
 
         LinearLayout labels = new LinearLayout(getActivity());
@@ -1311,15 +1134,12 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         setSelectionMode(false);
         // A read under way must not bring the tracks back once they are gone, and no other read
         // starts while they go.
-        catalogueEdited(null);
-        appliedSnapshot = null;
+        OfflineCatalogue.clear();
+        applyCatalogue(null);
         reading = true;
         setLoading(true);
-        tracks = new ArrayList<>();
-        indexTracks();
-        showTracks();
 
-        runOffMainThread(() -> {
+        Utils.runOnBackgroundThread(() -> {
             try {
                 for (OfflineTrack track : deleted) {
                     OfflineStorage.delete(track.audioFile());
@@ -1328,7 +1148,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             } catch (Exception ex) {
                 Logger.printException(() -> "Could not delete every download", ex);
             }
-            catalogueEdited(null);
+            OfflineCatalogue.clear();
 
             Utils.runOnMainThread(() -> {
                 Utils.showToastShort(str("morphe_music_downloads_all_deleted"));
@@ -1354,14 +1174,10 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             Utils.showToastShort(str("morphe_music_downloads_track_delete_failed"));
             return;
         }
-        String path = track.audioFile().getAbsolutePath();
-        selectedTrackPaths.remove(path);
-
-        List<OfflineTrack> remaining = new ArrayList<>(tracks);
-        remaining.removeIf(listed -> listed.audioFile().getAbsolutePath().equals(path));
-        tracks = remaining;
+        selectedTrackPaths.remove(track.audioFile().getAbsolutePath());
+        tracks.remove(track);
         indexTracks();
-        rememberCatalogueChange();
+        appliedSnapshot = OfflineCatalogue.edited(musicRoot, tracks);
         showTracks();
         reloadPlaylists();
         Utils.showToastShort(str("morphe_music_downloads_track_deleted"));
@@ -1451,7 +1267,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         miniTitle.setText(track.displayTitle());
         miniArtist.setText(track.displayArtist());
         // Shares the cover decoded for the row of the track, which is usually on screen.
-        OfflineArtworkLoader.load(miniArtwork, track.artworkFile(), ui.rowArtworkPixels(), ui, true);
+        OfflineArtworkLoader.load(miniArtwork, track.artworkFile(), ui.rowArtworkPixels(), ui);
     }
 
     private void setButtonEnabled(ImageButton button, boolean enabled) {

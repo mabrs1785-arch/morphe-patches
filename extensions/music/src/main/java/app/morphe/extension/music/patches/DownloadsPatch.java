@@ -231,7 +231,9 @@ public final class DownloadsPatch {
             }
             Utils.verifyOnMainThread();
 
-            ProtoMessage endpoint = new ProtoMessage(message.toByteArray())
+            byte[] playlistCommandBytes = message.toByteArray();
+            Logger.printInfo(() -> "TMP offline playlist command: " + Base64.encodeToString(playlistCommandBytes, Base64.NO_WRAP));
+            ProtoMessage endpoint = new ProtoMessage(playlistCommandBytes)
                     .messageField(OFFLINE_PLAYLIST_ENDPOINT);
             String playlistId = endpoint.stringField(1);
             final long action = endpoint.varintField(2);
@@ -333,6 +335,7 @@ public final class DownloadsPatch {
             Utils.verifyOnMainThread();
 
             byte[] commandBytes = message.toByteArray();
+            Logger.printInfo(() -> "TMP offline upsell command: " + Base64.encodeToString(commandBytes, Base64.NO_WRAP));
             String videoId = getOfflineUpsellVideoId(commandBytes);
             if (!videoId.isEmpty()) return onMenuDownload(videoId);
 

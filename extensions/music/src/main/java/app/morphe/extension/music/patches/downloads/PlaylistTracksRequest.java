@@ -51,9 +51,7 @@ final class PlaylistTracksRequest {
     /** The playlist needs the account, and no request of the app with the account was seen yet. */
     static final Result NEEDS_ACCOUNT = new Result(Collections.emptyList(), false);
 
-    private static final String INNERTUBE_KEY = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30";
-    private static final String WEB_BROWSE_URL =
-            "https://music.youtube.com/youtubei/v1/browse?key=" + INNERTUBE_KEY + "&alt=json&prettyPrint=false";
+    private static final String WEB_BROWSE_URL = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false";
     private static final String WEB_CLIENT_NAME = "WEB_REMIX";
     private static final String WEB_CLIENT_ID = "67";
     private static final String WEB_CLIENT_VERSION = "1.20260914.01.00";

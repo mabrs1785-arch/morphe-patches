@@ -13,13 +13,13 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.text.format.Formatter;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -68,6 +68,11 @@ public final class PlaylistDownloader {
      *                   'OLAK5uy_…' for the playlist of an album, or the 'MPREb_…' browse id of an album.
      */
     public static void start(@NonNull String playlistId) {
+        // Listing the tracks retries for a long while before it gives up without the network.
+        if (!Utils.isNetworkConnected()) {
+            Utils.showToastShort(str("morphe_music_downloads_playlist_waiting_network"));
+            return;
+        }
         if (!running.compareAndSet(false, true)) {
             Utils.showToastShort(str("morphe_music_downloads_playlist_already_running"));
             return;
@@ -97,7 +102,7 @@ public final class PlaylistDownloader {
             if (LocalDownloadManager.canPostProgress()) {
                 LocalDownloadManager.showDownloadNotification(NOTIFICATION_KEY,
                         str("morphe_music_downloads_playlist_title"), -1, true,
-                        str("morphe_music_downloads_playlist_listed", tracksListed));
+                        str("morphe_music_downloads_playlist_listed", OfflineUi.trackCount(tracksListed)));
             }
         });
 
@@ -125,9 +130,10 @@ public final class PlaylistDownloader {
         running.set(false);
 
         if (missing.isEmpty()) {
+            String count = OfflineUi.trackCount(videoIds.size());
             endWithMessage(result.complete()
-                    ? str("morphe_music_downloads_playlist_all_saved", videoIds.size())
-                    : str("morphe_music_downloads_playlist_listed_all_saved", videoIds.size()));
+                    ? str("morphe_music_downloads_playlist_all_saved", count)
+                    : str("morphe_music_downloads_playlist_listed_all_saved", count));
             return;
         }
 
@@ -169,11 +175,9 @@ public final class PlaylistDownloader {
             return;
         }
 
-        final long megabytes = missing.size() * AVERAGE_TRACK_BYTES / (1024 * 1024);
         String message = str("morphe_music_downloads_playlist_confirm_message",
-                trackCount, missing.size(), megabytes >= 1024
-                        ? String.format(Locale.getDefault(), "%.1f GB", megabytes / 1024f)
-                        : megabytes + " MB");
+                OfflineUi.trackCount(trackCount), OfflineUi.trackCount(missing.size()),
+                Formatter.formatShortFileSize(activity, missing.size() * AVERAGE_TRACK_BYTES));
         if (!complete) {
             message += "\n\n" + str("morphe_music_downloads_playlist_incomplete");
         }
@@ -187,7 +191,8 @@ public final class PlaylistDownloader {
                             Utils.showToastShort(str("morphe_music_downloads_playlist_already_running"));
                             return;
                         }
-                        Utils.showToastShort(str("morphe_music_downloads_playlist_started", missing.size()));
+                        Utils.showToastShort(str("morphe_music_downloads_playlist_started",
+                                OfflineUi.trackCount(missing.size())));
                         Utils.runOnBackgroundThread(() -> downloadAll(missing));
                     },
                     () -> {
@@ -209,7 +214,8 @@ public final class PlaylistDownloader {
                 if (!awaitNetwork(done, total)) {
                     final int doneCount = done;
                     Logger.printInfo(() -> "No network, playlist download stopped at " + doneCount + "/" + total);
-                    endWithMessage(str("morphe_music_downloads_playlist_stopped", done, total));
+                    endWithMessage(str("morphe_music_downloads_playlist_stopped", done,
+                            OfflineUi.trackCount(total)));
                     return;
                 }
 
@@ -237,11 +243,12 @@ public final class PlaylistDownloader {
             Logger.printInfo(() -> "Playlist download finished, saved: " + savedCount + ", failed: " + failedCount);
 
             endWithMessage(failed == 0
-                    ? str("morphe_music_downloads_playlist_complete", saved)
-                    : str("morphe_music_downloads_playlist_complete_with_failures", saved, failed));
+                    ? str("morphe_music_downloads_playlist_complete", OfflineUi.trackCount(saved))
+                    : str("morphe_music_downloads_playlist_complete_with_failures",
+                            OfflineUi.trackCount(saved), OfflineUi.trackCount(failed)));
         } catch (Exception ex) {
             Logger.printException(() -> "Playlist download failed", ex);
-            endWithMessage(str("morphe_music_downloads_playlist_stopped", done, total));
+            endWithMessage(str("morphe_music_downloads_playlist_stopped", done, OfflineUi.trackCount(total)));
         } finally {
             running.set(false);
         }

@@ -306,6 +306,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         LocalDownloadManager.removeSavedListener(onTrackSaved);
         mainHandler.removeCallbacks(refresh);
         OfflinePlaybackService.removeListener(this);
+        OfflineArtworkLoader.evictAll();
         super.onStop();
     }
 

@@ -157,6 +157,15 @@ final class OfflineArtworkLoader {
         decoder.getQueue().removeIf(task -> task instanceof DecodeTask decode && decode.owner == owner);
     }
 
+    /**
+     * Lets go of the cached covers, for when the screen showing them stops. The player keeps the
+     * process alive in the background, where the covers would otherwise stay for as long as it
+     * plays. Rows still on screen keep theirs.
+     */
+    static void evictAll() {
+        cache.evictAll();
+    }
+
     private static final class DecodeTask implements Runnable {
         /** Weak, so a request still queued does not keep a closed screen in memory. */
         private final WeakReference<ImageView> target;

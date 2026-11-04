@@ -233,7 +233,7 @@ public final class LocalDownloadManager {
             }
             Logger.printDebug(() -> "Saved " + destination + " (" + destination.length() + " bytes)");
 
-            OfflineCatalogue.refresh(directory);
+            OfflineCatalogue.added(videoId);
             notifyTrackSaved();
             if (!quiet) Utils.showToastShort(str("morphe_music_downloads_complete"));
             return true;

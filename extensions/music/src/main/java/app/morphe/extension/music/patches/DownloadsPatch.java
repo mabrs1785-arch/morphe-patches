@@ -86,14 +86,18 @@ public final class DownloadsPatch {
     /** Browse id of the stock offline tab, which the local catalogue replaces. */
     private static final byte[] OFFLINE_BROWSE_ID =
             "FEmusic_offline".getBytes(StandardCharsets.US_ASCII);
-    /** In the path of the text of a song row that shows the artist, the album and the length. */
+    /**
+     * In the path of the text of a song row that shows the artist, the album and the length,
+     * under its title.
+     */
     private static final String SONG_ROW_DETAILS_PATH = "badged_text.";
 
     /**
      * Injection point.
-     * Usually is called off the main thread.
+     * Usually is called off the main thread. Called when a litho text is created, and again when
+     * the app reuses it, such as a row scrolled off and back on screen.
      *
-     * @return The text, with the downloaded mark if it is the text of a song row that is downloaded.
+     * @return The text, with the downloaded mark if it is the details text of a downloaded song.
      */
     public static CharSequence onLithoTextLoaded(ContextInterface conversionContext, CharSequence original) {
         try {
@@ -105,15 +109,11 @@ public final class DownloadsPatch {
                 Logger.printDebug(() -> "Found download button label: " + downloadButtonLabel);
             }
 
-            if (inAppDownloads() && Settings.DOWNLOADS_MARK.get()) {
-                DownloadedMark.prepare();
-                if (Utils.contains(path, DownloadedMarkFilter.SONG_ROW_PATH)) {
-                    String videoId = DownloadedMarkFilter.downloadedRow();
-                    if (videoId != null) {
-                        Logger.printDebug(() -> "Text of downloaded " + videoId + " at " + path + ": " + original);
-                        if (Utils.contains(path, SONG_ROW_DETAILS_PATH)) return DownloadedMark.addTo(original);
-                    }
-                }
+            if (inAppDownloads() && Settings.DOWNLOADS_MARK.get()
+                    && Utils.contains(path, DownloadedMarkFilter.SONG_ROW_PATH)
+                    && Utils.contains(path, SONG_ROW_DETAILS_PATH)
+                    && DownloadedMarkFilter.downloadedRow() != null) {
+                return DownloadedMark.addTo(original);
             }
         } catch (Exception ex) {
             Logger.printException(() -> "onLithoTextLoaded failure", ex);

@@ -13,14 +13,10 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
-
-import app.morphe.extension.shared.Logger;
-import app.morphe.extension.shared.Utils;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The downloaded tracks, read from their folder off the main thread.
@@ -53,15 +49,13 @@ final class OfflineCatalogue {
     @Nullable
     private static Snapshot cached;
 
-    /** The video ids of the tracks of a catalogue, for the marks of the lists of the app. */
-    private record IdIndex(Snapshot snapshot, Set<String> videoIds) {
-    }
-
+    /**
+     * The video ids of the audio files of the folder, for the marks of the lists of the app. Each
+     * file is named after its id, so listing the folder gives them in milliseconds, where reading
+     * the tracks takes seconds. Null until a mark is first needed, and once the folder is emptied.
+     */
     @Nullable
-    private static volatile IdIndex idIndex;
-
-    /** If the folder is being read for {@link #contains}. */
-    private static final AtomicBoolean reading = new AtomicBoolean();
+    private static volatile Set<String> videoIds;
 
     private OfflineCatalogue() {
     }
@@ -74,48 +68,22 @@ final class OfflineCatalogue {
     }
 
     /**
-     * @return If the catalogue holds the track. The folder is read in the background the first
-     *         time, so the lists built until then carry no mark.
+     * @return If a track with this video id is downloaded. The folder is listed the first time,
+     *         which must be done off the main thread.
      */
     static boolean contains(String videoId) {
-        Snapshot snapshot = cached();
-        if (snapshot == null) {
-            readIfNeeded();
-            return false;
+        Set<String> ids = videoIds;
+        if (ids == null) {
+            ids = videoIdsOf(audioNames(LocalDownloadManager.getDownloadDirectory()));
+            videoIds = ids;
         }
-
-        IdIndex index = idIndex;
-        if (index == null || index.snapshot() != snapshot) {
-            Set<String> videoIds = new HashSet<>();
-            for (OfflineTrack track : snapshot.tracks()) {
-                videoIds.add(track.videoId());
-            }
-            index = new IdIndex(snapshot, videoIds);
-            idIndex = index;
-        }
-        return index.videoIds().contains(videoId);
+        return ids.contains(videoId);
     }
 
-    /**
-     * Reads the folder in the background if the catalogue has not been read yet. Called ahead of
-     * the first list, since the rows built before the read ends carry no mark.
-     */
-    static void readIfNeeded() {
-        if (cached() != null || !reading.compareAndSet(false, true)) return;
-        Utils.runOnBackgroundThread(() -> {
-            try {
-                update(LocalDownloadManager.getDownloadDirectory());
-            } catch (Exception ex) {
-                Logger.printException(() -> "Could not read the downloads", ex);
-            } finally {
-                reading.set(false);
-            }
-        });
-    }
-
-    /** Lists a track just saved, if the catalogue has been read. Runs off the main thread. */
-    static void refresh(File directory) {
-        if (cached() != null) update(directory);
+    /** Lists a track just saved. */
+    static void added(String videoId) {
+        Set<String> ids = videoIds;
+        if (ids != null) ids.add(videoId);
     }
 
     /**
@@ -125,9 +93,14 @@ final class OfflineCatalogue {
     static Snapshot edited(List<OfflineTrack> tracks) {
         Snapshot snapshot = new Snapshot(-1, -1,
                 Collections.unmodifiableList(new ArrayList<>(tracks)));
+        Set<String> ids = ConcurrentHashMap.newKeySet();
+        for (OfflineTrack track : tracks) {
+            ids.add(track.videoId());
+        }
         synchronized (lock) {
             cached = snapshot;
         }
+        videoIds = ids;
         return snapshot;
     }
 
@@ -135,6 +108,7 @@ final class OfflineCatalogue {
         synchronized (lock) {
             cached = null;
         }
+        videoIds = null;
     }
 
     /**
@@ -152,18 +126,14 @@ final class OfflineCatalogue {
 
         // Read before listing, so a file added while listing makes the next visit read again.
         final long modified = directory.lastModified();
-        String[] names = directory.list();
-        List<String> audioNames = new ArrayList<>();
-        if (names != null) {
-            for (String name : names) {
-                if (isAudioFile(name)) audioNames.add(name);
-            }
-        }
+        List<String> audioNames = audioNames(directory);
 
         if (before != null && before.modified() == modified
                 && before.audioFiles() == audioNames.size()) {
             return;
         }
+        // The folder may have changed behind the app.
+        videoIds = videoIdsOf(audioNames);
 
         Map<String, OfflineTrack> known = new HashMap<>();
         if (before != null) {
@@ -184,6 +154,25 @@ final class OfflineCatalogue {
             // A track deleted from the screen meanwhile may still be in what was read.
             if (cached == before) cached = snapshot;
         }
+    }
+
+    private static List<String> audioNames(File directory) {
+        String[] names = directory.list();
+        List<String> audioNames = new ArrayList<>();
+        if (names != null) {
+            for (String name : names) {
+                if (isAudioFile(name)) audioNames.add(name);
+            }
+        }
+        return audioNames;
+    }
+
+    private static Set<String> videoIdsOf(List<String> audioNames) {
+        Set<String> ids = ConcurrentHashMap.newKeySet();
+        for (String name : audioNames) {
+            ids.add(OfflineTrack.videoIdOf(name));
+        }
+        return ids;
     }
 
     /** By name only, since asking the file system about thousands of files takes seconds. */

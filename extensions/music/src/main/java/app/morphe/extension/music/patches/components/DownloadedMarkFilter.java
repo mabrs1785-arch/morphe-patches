@@ -9,6 +9,8 @@ package app.morphe.extension.music.patches.components;
 
 import androidx.annotation.Nullable;
 
+import java.nio.charset.StandardCharsets;
+
 import app.morphe.extension.music.patches.downloads.DownloadedMark;
 import app.morphe.extension.music.settings.Settings;
 import app.morphe.extension.shared.Logger;
@@ -33,6 +35,13 @@ public final class DownloadedMarkFilter extends Filter {
      */
     private static final int ROW_PATH_SEPARATORS = 3;
 
+    private static final int VIDEO_ID_LENGTH = 11;
+    /** A one byte tag and a one byte length, which is all a field of a video id needs. */
+    private static final int FIELD_HEADER_LENGTH = 2;
+    /** Wire type of the length delimited fields, in the low bits of a tag. */
+    private static final int WIRE_TYPE_MASK = 0x07;
+    private static final int WIRE_TYPE_LENGTH_DELIMITED = 2;
+
     /**
      * The downloaded song of the row being built on this thread, or null if the row is not of a
      * downloaded song. The components of a row are built one after the other on the same thread,
@@ -52,7 +61,7 @@ public final class DownloadedMarkFilter extends Filter {
         if (Settings.DOWNLOAD_MODE.get() != DownloadMode.IN_APP) return false;
 
         if (isRow(path, contentIndex)) {
-            String videoId = DownloadedMark.downloadedIdIn(buffer);
+            String videoId = downloadedIdIn(buffer);
             downloadedRow.set(videoId);
             if (videoId != null) Logger.printDebug(() -> "Downloaded song row of " + videoId);
         }
@@ -74,5 +83,41 @@ public final class DownloadedMarkFilter extends Filter {
     @Nullable
     public static String downloadedRow() {
         return downloadedRow.get();
+    }
+
+    /**
+     * Looks through the component of a song row for a video id of a downloaded track. The row
+     * holds its song in the video id of its play endpoint and of the endpoints of its menu, each
+     * a length delimited field of 11 characters.
+     *
+     * @return The video id, or null if the row is not of a downloaded song.
+     */
+    @Nullable
+    private static String downloadedIdIn(byte[] buffer) {
+        for (int i = 0, last = buffer.length - FIELD_HEADER_LENGTH - VIDEO_ID_LENGTH; i <= last; i++) {
+            if (buffer[i + 1] != VIDEO_ID_LENGTH || !isStringFieldTag(buffer[i])) continue;
+            final int start = i + FIELD_HEADER_LENGTH;
+            if (!isVideoId(buffer, start)) continue;
+
+            String videoId = new String(buffer, start, VIDEO_ID_LENGTH, StandardCharsets.US_ASCII);
+            if (DownloadedMark.isDownloaded(videoId)) return videoId;
+        }
+        return null;
+    }
+
+    /** A single byte tag, of the fields 1 to 15, with the length delimited wire type. */
+    private static boolean isStringFieldTag(byte tag) {
+        return tag > 0 && (tag & WIRE_TYPE_MASK) == WIRE_TYPE_LENGTH_DELIMITED;
+    }
+
+    private static boolean isVideoId(byte[] buffer, int start) {
+        for (int i = start, end = start + VIDEO_ID_LENGTH; i < end; i++) {
+            final byte b = buffer[i];
+            if (!((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+                    || b == '-' || b == '_')) {
+                return false;
+            }
+        }
+        return true;
     }
 }

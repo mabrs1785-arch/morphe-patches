@@ -139,6 +139,9 @@ Les morceaux téléchargés apparaîtront ici"</string>
   <string name="morphe_music_downloads_sort_artist">Trier par artiste</string>
   <string name="morphe_music_downloads_sort_title">Trier par titre</string>
   <string name="morphe_music_downloads_sort_size">Trier par taille</string>
+  <string name="morphe_music_downloads_sort_newest">Derniers téléchargés en premier</string>
+  <string name="morphe_music_downloads_sort_oldest">Plus anciens téléchargés en premier</string>
+  <string name="morphe_music_downloads_collapse_player">Réduire le lecteur</string>
   <string name="morphe_music_downloads_delete_all">Supprimer tous les téléchargements</string>
   <string name="morphe_music_downloads_delete_all_title">Supprimer tous les téléchargements ?</string>
   <string name="morphe_music_downloads_delete_all_message">Tous les morceaux téléchargés seront supprimés de cet appareil</string>

@@ -151,6 +151,9 @@ Downloaded tracks appear here"</string>
     <string name="morphe_music_downloads_sort_artist">Sort by artist</string>
     <string name="morphe_music_downloads_sort_title">Sort by title</string>
     <string name="morphe_music_downloads_sort_size">Sort by size</string>
+    <string name="morphe_music_downloads_sort_newest">Newest downloads first</string>
+    <string name="morphe_music_downloads_sort_oldest">Oldest downloads first</string>
+    <string name="morphe_music_downloads_collapse_player">Collapse player</string>
     <string name="morphe_music_downloads_delete_all">Delete all downloads</string>
     <string name="morphe_music_downloads_delete_all_title">Delete all downloads?</string>
     <string name="morphe_music_downloads_delete_all_message">All downloaded tracks will be deleted from this device</string>

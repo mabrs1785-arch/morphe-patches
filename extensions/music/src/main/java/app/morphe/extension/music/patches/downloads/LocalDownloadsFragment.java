@@ -11,6 +11,7 @@ import static app.morphe.extension.shared.StringRef.str;
 
 import android.animation.ValueAnimator;
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.ColorStateList;
@@ -34,6 +35,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.Window;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
@@ -96,6 +98,12 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     /** Icon buttons are square, otherwise their round ripple is drawn as a stretched oval. */
     private static final int ICON_BUTTON_DP = 48;
 
+    /** The full player shows the cover across the screen, so it is decoded at a larger size. */
+    private static final int FULL_ARTWORK_PIXELS = 1024;
+    private static final int FULL_GUTTER_DP = 24;
+    private static final int FULL_PLAY_BUTTON_DP = 72;
+    private static final int FULL_SKIP_BUTTON_DP = 56;
+
     private File musicRoot;
     private ImageView miniArtwork;
     private TextView miniTitle;
@@ -124,9 +132,23 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     private EditText searchBar;
     private boolean userSeeking;
 
+    /** Opened by tapping a track or the mini player, like the player of online playback. */
+    @Nullable
+    private Dialog fullPlayer;
+    private ImageView fullArtwork;
+    private TextView fullTitle;
+    private TextView fullArtist;
+    private TextView fullElapsed;
+    private TextView fullDuration;
+    private ImageButton fullPlay;
+    private ImageButton fullPrevious;
+    private ImageButton fullNext;
+    private SeekBar fullSeek;
+
     /** How the catalogue is ordered, remembered between visits. */
     private enum SortOrder {
-        ARTIST, TITLE, SIZE;
+        // New values go at the end, the saved order is stored by name.
+        ARTIST, TITLE, SIZE, NEWEST, OLDEST;
 
         static SortOrder saved() {
             try {
@@ -175,6 +197,13 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         super.onStop();
     }
 
+    @Override
+    public void onDestroyView() {
+        if (fullPlayer != null) fullPlayer.dismiss();
+        fullPlayer = null;
+        super.onDestroyView();
+    }
+
     /**
      * Reads the catalogue from disk. Every other method works off this snapshot.
      */
@@ -198,6 +227,14 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             case TITLE -> byTitle;
             case SIZE -> Comparator.comparingLong(
                     (OfflineTrack track) -> track.audioFile().length()).reversed();
+            // A finished download is renamed from its partial file and never written again,
+            // so its modification time is when it was downloaded.
+            case NEWEST -> Comparator.comparingLong(
+                    (OfflineTrack track) -> track.audioFile().lastModified()).reversed()
+                    .thenComparing(byTitle);
+            case OLDEST -> Comparator.comparingLong(
+                    (OfflineTrack track) -> track.audioFile().lastModified())
+                    .thenComparing(byTitle);
             default -> Comparator.comparing(
                     (OfflineTrack track) -> track.displayArtist().toLowerCase(Locale.ROOT))
                     .thenComparing(byTitle);
@@ -295,6 +332,8 @@ public final class LocalDownloadsFragment extends PreferenceFragment
                 str("morphe_music_downloads_sort_artist"),
                 str("morphe_music_downloads_sort_title"),
                 str("morphe_music_downloads_sort_size"),
+                str("morphe_music_downloads_sort_newest"),
+                str("morphe_music_downloads_sort_oldest"),
         };
         showMenu(anchor, items, SortOrder.saved().ordinal(), position -> {
             Settings.DOWNLOADS_SORT.save(SortOrder.values()[position].name());
@@ -455,40 +494,234 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         line.addView(miniNext, new LinearLayout.LayoutParams(dp(ICON_BUTTON_DP), dp(ICON_BUTTON_DP)));
 
         outer.addView(line, new LinearLayout.LayoutParams(-1, dp(60)));
-        outer.addView(createSeekBar(), new LinearLayout.LayoutParams(-1, dp(SEEK_BAR_TOUCH_DP)));
+        miniSeek = createSeekBar(false);
+        outer.addView(miniSeek, new LinearLayout.LayoutParams(-1, dp(SEEK_BAR_TOUCH_DP)));
+
+        // The buttons keep their own taps, anywhere else on the bar opens the full player.
+        line.setOnClickListener(v -> openFullPlayer(findByPath(playingPath)));
         return outer;
     }
 
-    private SeekBar createSeekBar() {
-        miniSeek = new SeekBar(getActivity());
+    /**
+     * @param alwaysShowThumb The full player keeps its thumb, the mini player only shows it
+     *                        while dragging.
+     */
+    private SeekBar createSeekBar(boolean alwaysShowThumb) {
+        SeekBar seek = new SeekBar(getActivity());
         // The bar keeps the gutters of the list, so it reads as a control rather than an edge.
-        miniSeek.setPadding(dp(16), 0, dp(16), 0);
-        miniSeek.setProgressDrawable(createSeekBarDrawable());
-        // The stock thumb draws a ripple far wider than the bar, so it only appears while dragging.
-        miniSeek.setThumb(null);
-        miniSeek.setThumbOffset(0);
-        miniSeek.setBackground(null);
-        miniSeek.setSplitTrack(false);
-        miniSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+        seek.setPadding(dp(16), 0, dp(16), 0);
+        seek.setProgressDrawable(createSeekBarDrawable());
+        // The stock thumb draws a ripple far wider than the bar, so it is replaced.
+        seek.setThumb(alwaysShowThumb ? createThumb() : null);
+        seek.setThumbOffset(alwaysShowThumb ? dp(SEEK_THUMB_DP) / 2 : 0);
+        seek.setBackground(null);
+        seek.setSplitTrack(false);
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onStartTrackingTouch(SeekBar bar) {
                 userSeeking = true;
-                bar.setThumb(createThumb());
-                bar.setThumbOffset(dp(SEEK_THUMB_DP) / 2);
+                if (!alwaysShowThumb) {
+                    bar.setThumb(createThumb());
+                    bar.setThumbOffset(dp(SEEK_THUMB_DP) / 2);
+                }
             }
 
             @Override
             public void onStopTrackingTouch(SeekBar bar) {
                 userSeeking = false;
-                bar.setThumb(null);
+                if (!alwaysShowThumb) bar.setThumb(null);
                 OfflinePlaybackService.seekTo(bar.getProgress());
             }
 
             @Override
             public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                if (fromUser && bar == fullSeek && fullElapsed != null) {
+                    fullElapsed.setText(formatTime(value));
+                }
             }
         });
-        return miniSeek;
+        return seek;
+    }
+
+    /**
+     * A full screen player like the one of online playback: large cover, title, artist,
+     * a seek bar with times, and the playback controls. Back or the arrow closes it.
+     */
+    private void openFullPlayer(@Nullable OfflineTrack track) {
+        Activity activity = getActivity();
+        if (activity == null || track == null) return;
+        if (fullPlayer != null && fullPlayer.isShowing()) {
+            applyFullTrackVisuals(track);
+            return;
+        }
+
+        Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout root = new LinearLayout(activity);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(background());
+        root.setPadding(dp(FULL_GUTTER_DP - 12), dp(8), dp(FULL_GUTTER_DP - 12), dp(24));
+
+        // Top bar with the button that collapses the player back to the list.
+        LinearLayout top = new LinearLayout(activity);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        ImageButton collapse = icon(collapseIcon(), str("morphe_music_downloads_collapse_player"));
+        collapse.setColorFilter(foreground());
+        collapse.setOnClickListener(v -> dialog.dismiss());
+        top.addView(collapse, new LinearLayout.LayoutParams(dp(ICON_BUTTON_DP), dp(ICON_BUTTON_DP)));
+        root.addView(top, new LinearLayout.LayoutParams(-1, -2));
+
+        // The cover is square and as wide as the screen allows, centered in the free space.
+        LinearLayout artworkArea = new LinearLayout(activity);
+        artworkArea.setGravity(Gravity.CENTER);
+        artworkArea.setPadding(dp(12), dp(8), dp(12), dp(8));
+        fullArtwork = artworkView(null);
+        final int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        final int artworkSize = screenWidth - 2 * dp(FULL_GUTTER_DP);
+        artworkArea.addView(fullArtwork, new LinearLayout.LayoutParams(artworkSize, artworkSize));
+        root.addView(artworkArea, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setPadding(dp(12), dp(16), dp(12), dp(8));
+        fullTitle = text("", 22, foreground());
+        fullTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        fullTitle.setSingleLine(true);
+        fullTitle.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
+        fullTitle.setMarqueeRepeatLimit(-1);
+        fullTitle.setSelected(true);
+        fullArtist = text("", 16, secondary());
+        fullArtist.setSingleLine(true);
+        fullArtist.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        labels.addView(fullTitle);
+        labels.addView(fullArtist);
+        root.addView(labels, new LinearLayout.LayoutParams(-1, -2));
+
+        fullSeek = createSeekBar(true);
+        // The thumb would be cut at the ends without room for its half width.
+        fullSeek.setPadding(dp(12), 0, dp(12), 0);
+        root.addView(fullSeek, new LinearLayout.LayoutParams(-1, dp(32)));
+
+        LinearLayout times = new LinearLayout(activity);
+        times.setPadding(dp(12), 0, dp(12), 0);
+        fullElapsed = text("0:00", 12, secondary());
+        fullDuration = text("", 12, secondary());
+        fullDuration.setGravity(Gravity.END);
+        times.addView(fullElapsed, new LinearLayout.LayoutParams(0, -2, 1));
+        times.addView(fullDuration, new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(times, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout controls = new LinearLayout(activity);
+        controls.setGravity(Gravity.CENTER);
+        controls.setPadding(0, dp(16), 0, dp(8));
+
+        fullPrevious = icon("yt_fill_experimental_skip_previous_vd_theme_24",
+                str("morphe_music_downloads_previous"));
+        fullPrevious.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        fullPrevious.setPadding(dp(12), dp(12), dp(12), dp(12));
+        fullPrevious.setOnClickListener(v -> OfflinePlaybackService.skipPrevious(activity));
+
+        // A round button filled with the text color, like the play button of the stock player.
+        fullPlay = new ImageButton(activity);
+        fullPlay.setContentDescription(str("morphe_music_downloads_play_pause"));
+        fullPlay.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        fullPlay.setPadding(dp(20), dp(20), dp(20), dp(20));
+        ShapeDrawable circle = new ShapeDrawable(new OvalShape());
+        circle.getPaint().setColor(foreground());
+        fullPlay.setBackground(new RippleDrawable(ColorStateList.valueOf(rippleColor()), circle, null));
+        fullPlay.setOnClickListener(v -> OfflinePlaybackService.toggle(activity));
+
+        fullNext = icon("yt_fill_experimental_skip_next_vd_theme_24",
+                str("morphe_music_downloads_next"));
+        fullNext.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        fullNext.setPadding(dp(12), dp(12), dp(12), dp(12));
+        fullNext.setOnClickListener(v -> OfflinePlaybackService.skipNext(activity));
+
+        LinearLayout.LayoutParams skipParams =
+                new LinearLayout.LayoutParams(dp(FULL_SKIP_BUTTON_DP), dp(FULL_SKIP_BUTTON_DP));
+        LinearLayout.LayoutParams playParams =
+                new LinearLayout.LayoutParams(dp(FULL_PLAY_BUTTON_DP), dp(FULL_PLAY_BUTTON_DP));
+        playParams.setMargins(dp(32), 0, dp(32), 0);
+        controls.addView(fullPrevious, skipParams);
+        controls.addView(fullPlay, playParams);
+        controls.addView(fullNext, new LinearLayout.LayoutParams(skipParams));
+        root.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+
+        dialog.setContentView(root);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(background());
+            window.setNavigationBarColor(background());
+        }
+        dialog.setOnDismissListener(d -> {
+            if (fullPlayer == dialog) fullPlayer = null;
+        });
+
+        fullPlayer = dialog;
+        applyFullTrackVisuals(track);
+        updateFullPlayIcon(showingPause);
+        if (miniSeek != null) {
+            updateFullProgress(miniSeek.getProgress(), miniSeek.getMax());
+        }
+        dialog.show();
+    }
+
+    @Nullable
+    private Drawable collapseIcon() {
+        Drawable icon = ResourceUtils.getDrawable("yt_outline_experimental_chevron_down_vd_theme_24");
+        if (icon == null) icon = ResourceUtils.getDrawable("yt_outline_chevron_down_vd_theme_24");
+        if (icon == null) icon = getActivity().getDrawable(android.R.drawable.arrow_down_float);
+        return icon;
+    }
+
+    private boolean fullPlayerShowing() {
+        return fullPlayer != null && fullPlayer.isShowing();
+    }
+
+    private void applyFullTrackVisuals(OfflineTrack track) {
+        if (fullPlayer == null) return;
+        fullTitle.setText(track.displayTitle());
+        fullArtist.setText(track.displayArtist());
+
+        Bitmap bitmap = track.artwork(FULL_ARTWORK_PIXELS);
+        if (bitmap != null) {
+            fullArtwork.clearColorFilter();
+            fullArtwork.setPadding(0, 0, 0, 0);
+            fullArtwork.setImageBitmap(bitmap);
+            fullArtwork.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        } else {
+            fullArtwork.setImageDrawable(
+                    ResourceUtils.getDrawable("yt_fill_experimental_play_circle_vd_theme_24"));
+            fullArtwork.setColorFilter(foreground());
+            fullArtwork.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            fullArtwork.setPadding(dp(64), dp(64), dp(64), dp(64));
+        }
+
+        int index = queuePaths.indexOf(track.audioFile().getAbsolutePath());
+        setButtonEnabled(fullPrevious, index > 0);
+        setButtonEnabled(fullNext, index >= 0 && index + 1 < queuePaths.size());
+    }
+
+    private void updateFullPlayIcon(boolean playing) {
+        if (fullPlay == null) return;
+        Drawable drawable = ResourceUtils.getDrawable(playing
+                ? "yt_fill_experimental_pause_vd_theme_24"
+                : "yt_fill_experimental_play_vd_theme_24");
+        fullPlay.setImageDrawable(drawable);
+        // The button is filled with the text color, so the icon takes the background color.
+        fullPlay.setColorFilter(background());
+    }
+
+    private void updateFullProgress(int position, int duration) {
+        if (fullSeek == null) return;
+        fullSeek.setMax(Math.max(1, duration));
+        if (!userSeeking) {
+            fullSeek.setProgress(position, true);
+            fullElapsed.setText(formatTime(position));
+        }
+        fullDuration.setText(duration > 1 ? formatTime(duration) : "");
     }
 
     private Drawable createThumb() {
@@ -643,6 +876,7 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             getActivity().startForegroundService(intent);
 
             applyTrackVisuals(track);
+            openFullPlayer(track);
         } catch (Exception ex) {
             Logger.printException(() -> "Offline playback failed: " + track.audioFile(), ex);
             Utils.showToastShort(str("morphe_music_downloads_play_failed"));
@@ -670,6 +904,15 @@ public final class LocalDownloadsFragment extends PreferenceFragment
                 setButtonEnabled(miniPrevious, index > 0);
                 setButtonEnabled(miniNext, index >= 0 && index + 1 < queuePaths.size());
                 markPlayingRow();
+                if (track != null && fullPlayerShowing()) applyFullTrackVisuals(track);
+            }
+
+            // The service stops itself at the end of the queue or when closed.
+            if (title.isEmpty() && fullPlayerShowing()) fullPlayer.dismiss();
+
+            if (fullPlayerShowing()) {
+                if (playing != showingPause) updateFullPlayIcon(playing);
+                updateFullProgress(position, duration);
             }
 
             // This runs on every playback tick, so the icon only morphs when the state
@@ -812,6 +1055,13 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         }
         return String.format(Locale.ROOT, "%d:%02d:%02d",
                 seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    }
+
+    /** Position in milliseconds as minutes and seconds, starting at 0:00. */
+    private static String formatTime(int milliseconds) {
+        final int seconds = Math.max(0, milliseconds / 1000);
+        if (seconds == 0) return "0:00";
+        return formatDuration(seconds);
     }
 
     private static String formatSize(long bytes) {

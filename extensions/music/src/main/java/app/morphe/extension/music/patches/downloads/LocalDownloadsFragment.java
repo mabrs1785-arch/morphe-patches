@@ -573,8 +573,12 @@ public final class LocalDownloadsFragment extends PreferenceFragment
             Bitmap scaled = Bitmap.createScaledBitmap(sampled, sizePixels, height, true);
             if (scaled != sampled) sampled.recycle();
             return scaled;
-        } catch (Throwable ex) {
+        } catch (Exception ex) {
             Logger.printDebug(() -> "Could not decode cover " + file, ex);
+            return null;
+        } catch (OutOfMemoryError error) {
+            // A missing cover is better than a crash, the cache frees memory as rows scroll by.
+            artworkCache.evictAll();
             return null;
         }
     }

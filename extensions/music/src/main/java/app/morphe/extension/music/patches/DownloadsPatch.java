@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 import app.morphe.extension.music.patches.downloads.LocalDownloadManager;
+import app.morphe.extension.music.patches.downloads.LocalDownloadsFragment;
 import app.morphe.extension.music.settings.Settings;
 import app.morphe.extension.music.shared.VideoInformation;
 import app.morphe.extension.shared.Logger;
@@ -125,6 +126,12 @@ public final class DownloadsPatch {
         final long now = System.currentTimeMillis();
         if (now - lastLocalDownloadsOpenTime < IGNORE_DOUBLE_CLICK_DURATION_MS) return;
         lastLocalDownloadsOpenTime = now;
+        // The app reopens its offline tab by itself whenever the connection comes or goes,
+        // which used to pile up copies of the screen on top of the one in use.
+        if (LocalDownloadsFragment.isOpen()) {
+            Logger.printDebug(() -> "Offline tab opened, the local downloads already are");
+            return;
+        }
         Logger.printDebug(() -> "Offline tab opened, showing the local downloads");
 
         Intent intent = new Intent();

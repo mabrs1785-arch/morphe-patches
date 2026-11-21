@@ -169,6 +169,7 @@ public final class LocalDownloadManager {
             Logger.printDebug(() -> "Saved " + destination + " (" + destination.length() + " bytes)");
 
             OfflineTrack.save(directory, videoId, title, artist, album, duration, artwork);
+            OfflineLibrary.onDownloadSaved(destination);
             Utils.showToastShort(str("morphe_music_downloads_complete"));
         } catch (Exception ex) {
             Logger.printException(() -> "Local audio download failed: " + videoId, ex);

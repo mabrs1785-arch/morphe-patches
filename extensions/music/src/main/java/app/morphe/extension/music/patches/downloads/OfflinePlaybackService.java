@@ -38,7 +38,9 @@ import android.os.PowerManager;
 
 import androidx.annotation.Nullable;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -56,6 +58,9 @@ import app.morphe.extension.shared.settings.BaseActivityHook;
  * downloads screen reads and edits them directly. Nothing large ever goes through an intent,
  * a queue of thousands of tracks used to exceed what an intent can carry. The service itself
  * only owns the media player, and is started whenever something has to be played.
+ * <p>
+ * Like online playback, the service stays in the foreground while paused, so the lock screen,
+ * headsets and Bluetooth can resume it. It stops itself after a while paused.
  */
 public final class OfflinePlaybackService extends Service {
 
@@ -82,17 +87,26 @@ public final class OfflinePlaybackService extends Service {
     private static final int NOTIFICATION_ID = 8841;
     private static final int PROGRESS_INTERVAL_MILLISECONDS = 500;
     private static final int SAVE_INTERVAL_MILLISECONDS = 10_000;
+    /** Updates of one track change arrive in a burst, which is posted as one notification. */
+    private static final int NOTIFICATION_COALESCE_MILLISECONDS = 150;
+    /** How long a paused player keeps its notification and lock screen controls. */
+    private static final long PAUSED_TIMEOUT_MILLISECONDS = 10 * 60_000L;
     private static final int NOTIFICATION_ARTWORK_PIXELS = 512;
     private static final float DUCK_VOLUME = 0.2f;
 
     /** Unreadable files in a row before playback gives up instead of skipping on. */
     private static final int MAX_CONSECUTIVE_ERRORS = 3;
 
+    /** Small values written often: where playback is. */
     private static final String PREFERENCES = "morphe_offline_player";
+    /** The queue itself, thousands of entries, only written when it changes. */
+    private static final String QUEUE_PREFERENCES = "morphe_offline_queue";
     private static final String KEY_QUEUE = "queue";
+    private static final String KEY_ORDER = "order";
     private static final String KEY_INDEX = "index";
     private static final String KEY_POSITION = "position";
     private static final String KEY_REPEAT = "repeat";
+    private static final String KEY_SHUFFLED = "shuffled";
 
     // Shared state, main thread only.
     private static final OfflineQueue<OfflineTrack> queue = new OfflineQueue<>();
@@ -105,6 +119,10 @@ public final class OfflinePlaybackService extends Service {
     /** Where the current track starts once prepared, for a queue restored after a restart. */
     private static int pendingSeek;
     private static boolean restoreAttempted;
+    @Nullable
+    private static String lastSavedQueue;
+    @Nullable
+    private static String lastSavedOrder;
 
     private static final ExecutorService artworkLoader = Executors.newSingleThreadExecutor();
 
@@ -176,6 +194,13 @@ public final class OfflinePlaybackService extends Service {
 
     public static void jumpTo(Context context, int queuePosition) {
         if (queuePosition < 0 || queuePosition >= queue.size()) return;
+        OfflinePlaybackService service = instance;
+        // The song that plays is not restarted, like tapping it in the online queue.
+        if (queuePosition == queue.index() && service != null
+                && (service.playerReady() || service.preparing())) {
+            if (!playing) toggle(context);
+            return;
+        }
         queue.jumpTo(queuePosition);
         pendingSeek = 0;
         startCurrent(context);
@@ -211,7 +236,11 @@ public final class OfflinePlaybackService extends Service {
 
     public static void toggle(Context context) {
         OfflinePlaybackService service = instance;
-        if (service != null && service.playerReady()) {
+        if (service != null && service.preparing()) {
+            // Still loading: the tap decides whether it starts once loaded.
+            if (service.playWhenPrepared) service.pause();
+            else service.resume();
+        } else if (service != null && service.playerReady()) {
             if (service.player.isPlaying()) service.pause();
             else service.resume();
         } else if (queue.current() != null) {
@@ -231,9 +260,10 @@ public final class OfflinePlaybackService extends Service {
         final int target = queue.previous(position);
         if (target < 0) return;
         pendingSeek = 0;
-        if (target == before && instance != null && instance.playerReady()) {
+        OfflinePlaybackService service = instance;
+        if (target == before && service != null && service.playerReady()) {
             seekTo(0);
-            if (!instance.player.isPlaying()) instance.resume();
+            if (!service.player.isPlaying()) service.resume();
             return;
         }
         startCurrent(context);
@@ -263,6 +293,8 @@ public final class OfflinePlaybackService extends Service {
         duration = 0;
         pendingSeek = 0;
         clearSavedState(context);
+        // The service may already be gone while its last notification is still shown.
+        cancelNotification(context);
         notifyQueueChanged();
         notifyProgress();
     }
@@ -275,32 +307,49 @@ public final class OfflinePlaybackService extends Service {
         if (restoreAttempted || !queue.isEmpty() || OfflineLibrary.isLoading()) return;
         restoreAttempted = true;
         try {
-            SharedPreferences preferences = preferences(context);
-            String saved = preferences.getString(KEY_QUEUE, "");
-            if (saved == null || saved.isEmpty()) return;
+            SharedPreferences state = preferences(context);
+            SharedPreferences saved = queuePreferences(context);
+            String savedQueue = saved.getString(KEY_QUEUE, "");
+            if (savedQueue == null || savedQueue.isEmpty()) return;
 
-            List<OfflineTrack> tracks = new ArrayList<>();
-            final int savedIndex = Math.max(0, preferences.getInt(KEY_INDEX, 0));
+            final File root = OfflineLibrary.root(context);
+            final int savedIndex = Math.max(0, state.getInt(KEY_INDEX, 0));
+            String[] names = savedQueue.split("\n");
+            String savedCurrent = names[Math.min(savedIndex, names.length - 1)];
+
+            List<OfflineTrack> tracks = new ArrayList<>(names.length);
             int restoredIndex = 0;
-            String[] paths = saved.split("\n");
-            for (int i = 0; i < paths.length; i++) {
-                OfflineTrack track = OfflineLibrary.find(paths[i]);
+            for (int i = 0; i < names.length; i++) {
+                OfflineTrack track = resolve(root, names[i]);
                 if (track == null) continue;
                 if (i <= savedIndex) restoredIndex = tracks.size();
                 tracks.add(track);
             }
             if (tracks.isEmpty()) return;
 
-            queue.set(tracks, restoredIndex, false);
+            List<OfflineTrack> original = null;
+            String savedOrder = saved.getString(KEY_ORDER, "");
+            if (state.getBoolean(KEY_SHUFFLED, false) && savedOrder != null && !savedOrder.isEmpty()) {
+                original = new ArrayList<>();
+                for (String name : savedOrder.split("\n")) {
+                    OfflineTrack track = resolve(root, name);
+                    if (track != null) original.add(track);
+                }
+            }
+            queue.restore(tracks, restoredIndex, original);
             try {
                 queue.setRepeat(OfflineQueue.Repeat.valueOf(
-                        preferences.getString(KEY_REPEAT, OfflineQueue.Repeat.OFF.name())));
+                        state.getString(KEY_REPEAT, OfflineQueue.Repeat.OFF.name())));
             } catch (Exception ignored) {
                 queue.setRepeat(OfflineQueue.Repeat.OFF);
             }
+            // Nothing to write back, this is what is saved.
+            lastSavedQueue = savedQueue;
+            lastSavedOrder = savedOrder == null ? "" : savedOrder;
+
             OfflineTrack current = queue.current();
-            pendingSeek = current != null && paths[Math.min(savedIndex, paths.length - 1)]
-                    .equals(current.path()) ? preferences.getInt(KEY_POSITION, 0) : 0;
+            pendingSeek = current != null && savedCurrent.equals(current.audioFile().getName())
+                    ? state.getInt(KEY_POSITION, 0) : 0;
             position = pendingSeek;
             duration = current == null ? 0 : current.durationSeconds() * 1000;
             playing = false;
@@ -311,12 +360,19 @@ public final class OfflinePlaybackService extends Service {
         }
     }
 
+    @Nullable
+    private static OfflineTrack resolve(File root, String name) {
+        if (name.isEmpty()) return null;
+        return OfflineLibrary.find(new File(root, name).getAbsolutePath());
+    }
+
     /** Deleted downloads leave the queue, and the player moves on if one was playing. */
     static void onTracksDeleted(Context context, List<String> paths) {
+        Set<String> deleted = new HashSet<>(paths);
         boolean currentChanged = false;
         List<OfflineTrack> items = queue.items();
         for (int i = items.size() - 1; i >= 0; i--) {
-            if (paths.contains(items.get(i).path())) currentChanged |= queue.remove(i);
+            if (deleted.contains(items.get(i).path())) currentChanged |= queue.remove(i);
         }
         if (currentChanged) onCurrentRemoved(context);
         onQueueEdited();
@@ -373,18 +429,43 @@ public final class OfflinePlaybackService extends Service {
         return context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
     }
 
+    private static SharedPreferences queuePreferences(Context context) {
+        return context.getSharedPreferences(QUEUE_PREFERENCES, Context.MODE_PRIVATE);
+    }
+
+    private static String joinNames(List<OfflineTrack> tracks) {
+        StringBuilder names = new StringBuilder(tracks.size() * 20);
+        for (OfflineTrack track : tracks) {
+            if (names.length() > 0) names.append('\n');
+            // Names rather than full paths keep the saved queue a fraction of the size.
+            names.append(track.audioFile().getName());
+        }
+        return names.toString();
+    }
+
+    /**
+     * Saves where playback is. The queue goes to its own file, rewritten only when it actually
+     * changed, so the frequent saves of the position stay a few hundred bytes.
+     */
     private static void saveState(Context context) {
+        // An empty queue is either a fresh process or a stop, which clears the state itself.
+        if (queue.isEmpty()) return;
         try {
-            StringBuilder paths = new StringBuilder();
-            for (OfflineTrack track : queue.items()) {
-                if (paths.length() > 0) paths.append('\n');
-                paths.append(track.path());
+            String joined = joinNames(queue.items());
+            String order = queue.isShuffled() ? joinNames(queue.unshuffledItems()) : "";
+            if (!joined.equals(lastSavedQueue) || !order.equals(lastSavedOrder)) {
+                lastSavedQueue = joined;
+                lastSavedOrder = order;
+                queuePreferences(context).edit()
+                        .putString(KEY_QUEUE, joined)
+                        .putString(KEY_ORDER, order)
+                        .apply();
             }
             preferences(context).edit()
-                    .putString(KEY_QUEUE, paths.toString())
                     .putInt(KEY_INDEX, queue.index())
                     .putInt(KEY_POSITION, position)
                     .putString(KEY_REPEAT, queue.repeat().name())
+                    .putBoolean(KEY_SHUFFLED, queue.isShuffled())
                     .apply();
         } catch (Exception ex) {
             Logger.printException(() -> "Could not save the offline queue", ex);
@@ -397,6 +478,15 @@ public final class OfflinePlaybackService extends Service {
 
     private static void clearSavedState(Context context) {
         preferences(context).edit().clear().apply();
+        queuePreferences(context).edit().clear().apply();
+        lastSavedQueue = null;
+        lastSavedOrder = null;
+    }
+
+    private static void cancelNotification(Context context) {
+        NotificationManager manager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.cancel(NOTIFICATION_ID);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -415,6 +505,8 @@ public final class OfflinePlaybackService extends Service {
     private int consecutiveErrors;
     private boolean foreground;
     private long lastSave;
+    @Nullable
+    private OfflineLibrary.Listener pendingRestore;
 
     /** The path the media player and the metadata belong to. */
     private String loadedPath = "";
@@ -431,6 +523,21 @@ public final class OfflinePlaybackService extends Service {
                 handler.postDelayed(this, PROGRESS_INTERVAL_MILLISECONDS);
             }
         }
+    };
+
+    private final Runnable postNotification = () -> {
+        if (instance != this || queue.current() == null) return;
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager != null) manager.notify(NOTIFICATION_ID, notification());
+    };
+
+    /** Paused long enough: the player goes away, the queue stays for the next play. */
+    private final Runnable pausedTimeout = () -> {
+        if (playerReady() && player.isPlaying()) return;
+        if (queue.current() != null) pendingSeek = position;
+        saveState(this);
+        stopPlayback();
+        notifyProgress();
     };
 
     /** Unplugged headphones or a disconnected speaker pause instead of playing out loud. */
@@ -464,7 +571,7 @@ public final class OfflinePlaybackService extends Service {
         session.setSessionActivity(openPlayerIntent());
         session.setActive(true);
 
-        // The system only sends this to receivers registered at runtime.
+        // A system broadcast, only delivered to receivers registered at runtime.
         registerReceiver(noisyReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
     }
 
@@ -476,22 +583,64 @@ public final class OfflinePlaybackService extends Service {
             goForeground();
             loadCurrent(true);
         } else if (ACTION_TOGGLE.equals(action)) {
-            toggle(this);
+            withQueue(() -> toggle(this));
         } else if (ACTION_NEXT.equals(action)) {
-            next(this);
+            withQueue(() -> next(this));
         } else if (ACTION_PREVIOUS.equals(action)) {
-            previous(this);
+            withQueue(() -> previous(this));
         } else if (ACTION_STOP.equals(action)) {
             stop(this);
         } else if (ACTION_DISMISS.equals(action)) {
-            if (queue.current() != null) pendingSeek = position;
-            saveState(this);
+            if (queue.current() != null) {
+                pendingSeek = position;
+                saveState(this);
+            }
             stopPlayback();
             notifyProgress();
         } else if (queue.current() == null) {
             stopSelf();
         }
         return START_NOT_STICKY;
+    }
+
+    /**
+     * A notification button can outlive the process, which then starts again with an empty
+     * queue. The saved queue is brought back first, or the stale notification goes away.
+     */
+    private void withQueue(Runnable action) {
+        if (!queue.isEmpty()) {
+            action.run();
+            return;
+        }
+        if (!OfflineLibrary.isLoading()) {
+            restoreIfIdle(this);
+            runOrGiveUp(action);
+            return;
+        }
+        if (pendingRestore != null) OfflineLibrary.removeListener(pendingRestore);
+        OfflineLibrary.Listener listener = new OfflineLibrary.Listener() {
+            @Override
+            public void onLibraryChanged(boolean loading, int scanned, int total) {
+                if (loading) return;
+                OfflineLibrary.removeListener(this);
+                if (pendingRestore == this) pendingRestore = null;
+                if (instance != OfflinePlaybackService.this) return;
+                restoreIfIdle(OfflinePlaybackService.this);
+                runOrGiveUp(action);
+            }
+        };
+        pendingRestore = listener;
+        OfflineLibrary.addListener(listener);
+        OfflineLibrary.ensureLoaded(this);
+    }
+
+    private void runOrGiveUp(Runnable action) {
+        if (queue.isEmpty()) {
+            cancelNotification(this);
+            stopSelf();
+            return;
+        }
+        action.run();
     }
 
     /**
@@ -514,6 +663,8 @@ public final class OfflinePlaybackService extends Service {
         position = pendingSeek;
         duration = track.durationSeconds() * 1000;
         playWhenPrepared = play;
+        // Shown as playing while it loads, so the buttons already offer pause.
+        playing = play;
         if (play) goForeground();
         publishMetadata(track);
 
@@ -542,8 +693,12 @@ public final class OfflinePlaybackService extends Service {
                 openAudioEffectSession(mp);
                 if (pendingSeek > 0 && pendingSeek < duration) mp.seekTo(pendingSeek);
                 pendingSeek = 0;
-                if (playWhenPrepared) resume();
-                else publishState(true);
+                if (playWhenPrepared) {
+                    resume();
+                } else {
+                    publishState(true);
+                    if (foreground) scheduleIdleStop();
+                }
                 publishMetadata(track);
             });
             mediaPlayer.setOnCompletionListener(mp -> {
@@ -570,7 +725,7 @@ public final class OfflinePlaybackService extends Service {
             position = 0;
             playing = false;
             publishState(true);
-            leaveForeground();
+            scheduleIdleStop();
             notifyQueueChanged();
             saveState(this);
             return;
@@ -581,13 +736,15 @@ public final class OfflinePlaybackService extends Service {
     }
 
     private void onTrackFailed(OfflineTrack track, String reason) {
+        // A paused load stays paused when it skips to the next track.
+        final boolean play = playWhenPrepared;
         Logger.printException(() -> "Offline player could not play " + track.audioFile() + ": " + reason);
         releasePlayer();
         consecutiveErrors++;
         if (consecutiveErrors < MAX_CONSECUTIVE_ERRORS && queue.next() >= 0) {
             Utils.showToastShort(str("morphe_music_downloads_play_failed"));
             pendingSeek = 0;
-            loadCurrent(true);
+            loadCurrent(play);
             onQueueEdited();
             return;
         }
@@ -595,15 +752,28 @@ public final class OfflinePlaybackService extends Service {
         playing = false;
         Utils.showToastShort(str("morphe_music_downloads_play_failed"));
         publishState(true);
-        leaveForeground();
+        if (foreground) scheduleIdleStop();
     }
 
     private void resume() {
+        if (preparing()) {
+            playWhenPrepared = true;
+            playing = true;
+            notifyProgress();
+            goForeground();
+            return;
+        }
         if (!playerReady()) {
             if (queue.current() != null) loadCurrent(true);
             return;
         }
-        if (!requestAudioFocus()) return;
+        if (!requestAudioFocus()) {
+            // A call holds the audio. Shown as paused rather than as a player that is silent.
+            playing = false;
+            publishState(true);
+            if (foreground) scheduleIdleStop();
+            return;
+        }
         player.setVolume(1f, 1f);
         player.start();
         goForeground();
@@ -617,21 +787,35 @@ public final class OfflinePlaybackService extends Service {
     }
 
     /**
-     * @param resumesSoon A call or a voice prompt interrupts playback. The service stays in the
-     *                    foreground, which it may not enter again from the background.
+     * @param resumesSoon A call or a voice prompt interrupts playback, which comes back once it
+     *                    is over. Any other pause cancels that.
      */
     private void pause(boolean resumesSoon) {
-        if (!playerReady() || !player.isPlaying()) return;
+        if (!resumesSoon) resumeOnFocusGain = false;
+        if (preparing()) {
+            playWhenPrepared = false;
+            playing = false;
+            notifyProgress();
+            if (resumesSoon) updateNotification();
+            else scheduleIdleStop();
+            return;
+        }
+        if (!playerReady() || !player.isPlaying()) {
+            // Already paused by a call: an explicit pause still starts the idle countdown.
+            if (!resumesSoon && foreground) scheduleIdleStop();
+            return;
+        }
         player.pause();
         publishState(true);
-        // Paused playback can be swiped away, like the notification of online playback.
-        if (!resumesSoon) leaveForeground();
+        if (!resumesSoon) scheduleIdleStop();
         saveState(this);
     }
 
     private void stopPlayback() {
-        releasePlayer();
         handler.removeCallbacks(progressTicker);
+        handler.removeCallbacks(postNotification);
+        handler.removeCallbacks(pausedTimeout);
+        releasePlayer();
         abandonAudioFocus();
         playing = false;
         loadedPath = "";
@@ -642,6 +826,8 @@ public final class OfflinePlaybackService extends Service {
         }
         stopForeground(STOP_FOREGROUND_REMOVE);
         foreground = false;
+        // Removing it explicitly also covers a notification the service no longer owns.
+        cancelNotification(this);
         stopSelf();
     }
 
@@ -651,6 +837,10 @@ public final class OfflinePlaybackService extends Service {
      */
     private boolean playerReady() {
         return prepared && player != null;
+    }
+
+    private boolean preparing() {
+        return player != null && !prepared;
     }
 
     private void releasePlayer() {
@@ -713,11 +903,8 @@ public final class OfflinePlaybackService extends Service {
                     pause(true);
                 }
             }
-            case AudioManager.AUDIOFOCUS_LOSS -> {
-                // Another player took over for good, such as online playback.
-                resumeOnFocusGain = false;
-                pause();
-            }
+            // Another player took over for good, such as online playback.
+            case AudioManager.AUDIOFOCUS_LOSS -> pause();
             default -> {
             }
         }
@@ -768,8 +955,8 @@ public final class OfflinePlaybackService extends Service {
      */
     private void publishState(boolean stateChanged) {
         final boolean nowPlaying = playerReady() && player.isPlaying();
-        playing = nowPlaying;
         if (playerReady()) {
+            playing = nowPlaying;
             position = player.getCurrentPosition();
             duration = player.getDuration();
         }
@@ -824,8 +1011,18 @@ public final class OfflinePlaybackService extends Service {
         });
     }
 
+    /**
+     * Enters the foreground once, right away as the system requires. While already there,
+     * updates are coalesced instead.
+     */
     private void goForeground() {
+        handler.removeCallbacks(pausedTimeout);
+        if (foreground) {
+            updateNotification();
+            return;
+        }
         try {
+            handler.removeCallbacks(postNotification);
             startForeground(NOTIFICATION_ID, notification());
             foreground = true;
         } catch (Exception ex) {
@@ -833,24 +1030,26 @@ public final class OfflinePlaybackService extends Service {
         }
     }
 
-    private void leaveForeground() {
-        if (!foreground) return;
-        foreground = false;
-        stopForeground(STOP_FOREGROUND_DETACH);
+    /** Paused: the controls stay, and the player stops itself if nothing happens for a while. */
+    private void scheduleIdleStop() {
+        handler.removeCallbacks(pausedTimeout);
+        handler.postDelayed(pausedTimeout, PAUSED_TIMEOUT_MILLISECONDS);
         updateNotification();
     }
 
-    @SuppressLint("NotificationPermission") // The patch declares POST_NOTIFICATIONS.
+    /**
+     * A track change updates the notification half a dozen times in a few hundred milliseconds,
+     * past the rate at which the system drops updates. Only the last one of a burst is posted.
+     */
     private void updateNotification() {
-        if (queue.current() == null) return;
-        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (manager != null) manager.notify(NOTIFICATION_ID, notification());
+        handler.removeCallbacks(postNotification);
+        handler.postDelayed(postNotification, NOTIFICATION_COALESCE_MILLISECONDS);
     }
 
     @SuppressLint("WrongConstant")
     private Notification notification() {
         OfflineTrack track = queue.current();
-        final boolean nowPlaying = playerReady() && player.isPlaying();
+        final boolean nowPlaying = playing;
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_headset)
                 .setContentTitle(track == null ? "YouTube Music" : track.displayTitle())
@@ -862,6 +1061,7 @@ public final class OfflinePlaybackService extends Service {
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
+                // Paused, it can be swiped away like the notification of online playback.
                 .setOngoing(nowPlaying)
                 .addAction(action(android.R.drawable.ic_media_previous,
                         str("morphe_music_downloads_previous"), serviceIntent(ACTION_PREVIOUS, 4)))
@@ -918,7 +1118,11 @@ public final class OfflinePlaybackService extends Service {
     @Override
     public void onDestroy() {
         handler.removeCallbacksAndMessages(null);
-        if (queue.current() != null) saveState(this);
+        if (pendingRestore != null) {
+            OfflineLibrary.removeListener(pendingRestore);
+            pendingRestore = null;
+        }
+        saveState(this);
         releasePlayer();
         abandonAudioFocus();
         try {
@@ -931,7 +1135,7 @@ public final class OfflinePlaybackService extends Service {
         }
         if (instance == this) instance = null;
         playing = false;
-        // The system may stop a paused player, the next play picks up where it was.
+        // The next play picks up where this one was.
         if (queue.current() != null) pendingSeek = position;
         notifyProgress();
         super.onDestroy();

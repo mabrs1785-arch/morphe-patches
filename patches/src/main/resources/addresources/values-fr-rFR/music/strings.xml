@@ -162,6 +162,7 @@ Les morceaux téléchargés apparaîtront ici"</string>
   <string name="morphe_music_downloads_track_delete_failed">Impossible de supprimer le téléchargement</string>
   <string name="morphe_music_downloads_play_failed">Impossible de lire le téléchargement</string>
   <string name="morphe_music_downloads_loading">Chargement des téléchargements… %1$s / %2$s</string>
+  <string name="morphe_music_downloads_track_subtitle_no_duration">%1$s • %2$s Mo</string>
   <string name="morphe_music_downloads_play_next">Lire ensuite</string>
   <string name="morphe_music_downloads_add_to_queue">Ajouter à la file d\'attente</string>
   <string name="morphe_music_downloads_added_next">Sera lu ensuite</string>

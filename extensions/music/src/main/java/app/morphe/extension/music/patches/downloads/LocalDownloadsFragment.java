@@ -149,6 +149,8 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     private ImageButton miniNext;
     private SeekBar miniSeek;
     private boolean showingPause;
+    /** Whether the play button already shows a state since the screen started. */
+    private boolean iconSynced;
     private boolean userSeeking;
 
     /** Path of the track the screen currently shows as playing. */
@@ -256,7 +258,10 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     @Override
     public void onStart() {
         super.onStart();
+        // The first state shown after coming back is drawn as is, not animated into.
+        iconSynced = false;
         OfflinePlaybackService.addListener(this);
+        OfflinePlaybackService.restoreIfIdle(getActivity());
     }
 
     @Override
@@ -487,9 +492,13 @@ public final class LocalDownloadsFragment extends PreferenceFragment
         public View getView(int position, View convertView, ViewGroup parent) {
             RowHolder holder = convertView == null ? createRow() : (RowHolder) convertView.getTag();
             OfflineTrack track = visible.get(position);
-            bindRow(holder, track, track.path().equals(shownPath),
-                    str("morphe_music_downloads_track_subtitle", track.displayArtist(),
-                            formatDuration(track.durationSeconds()), formatSize(track.sizeBytes())));
+            final String size = formatSize(track.sizeBytes());
+            // A track saved without a length leaves that slot out instead of an empty one.
+            bindRow(holder, track, track.path().equals(shownPath), track.durationSeconds() > 0
+                    ? str("morphe_music_downloads_track_subtitle", track.displayArtist(),
+                            formatDuration(track.durationSeconds()), size)
+                    : str("morphe_music_downloads_track_subtitle_no_duration",
+                            track.displayArtist(), size));
             holder.menu.setOnClickListener(v -> showTrackMenu(v, track));
             return holder.row;
         }
@@ -832,9 +841,10 @@ public final class LocalDownloadsFragment extends PreferenceFragment
     public void onProgress(boolean playing, int position, int duration) {
         if (miniPlayer == null) return;
         // The icon only morphs when the state actually flips while the bar is on screen.
-        if (playing != showingPause) {
-            updateMiniPlayIcon(playing, miniPlayer.getVisibility() == View.VISIBLE);
+        if (playing != showingPause || !iconSynced) {
+            updateMiniPlayIcon(playing, iconSynced && miniPlayer.getVisibility() == View.VISIBLE);
             updateFullPlayIcon(playing);
+            iconSynced = true;
         }
         miniSeek.setMax(Math.max(1, duration));
         if (!userSeeking) miniSeek.setProgress(position);

@@ -11,8 +11,10 @@ import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * The play queue of offline playback, modelled on the queue of online playback: play next,
@@ -126,7 +128,17 @@ public final class OfflineQueue<T> {
             return;
         }
         items.add(index + 1, item);
-        if (shuffled) unshuffled.add(item);
+        placeAfterCurrentUnshuffled(item);
+    }
+
+    /**
+     * The original order also gets the item right after the current one, so a song asked to
+     * play next still does when shuffle is turned off before it plays.
+     */
+    private void placeAfterCurrentUnshuffled(T item) {
+        if (!shuffled) return;
+        final int current = unshuffled.indexOf(current());
+        unshuffled.add(current < 0 ? unshuffled.size() : current + 1, item);
     }
 
     /** Appends at the end. An empty queue starts with it. */
@@ -192,8 +204,38 @@ public final class OfflineQueue<T> {
 
     /** Moves an item right after the current one. */
     public void moveNext(int position) {
-        if (position == index || index < 0) return;
+        if (position == index || index < 0 || position < 0 || position >= items.size()) return;
+        T item = items.get(position);
         move(position, position < index ? index : index + 1);
+        if (shuffled && unshuffled.remove(item)) placeAfterCurrentUnshuffled(item);
+    }
+
+    /** The order before shuffling, saved so a restored shuffled queue can still be unshuffled. */
+    public List<T> unshuffledItems() {
+        return new ArrayList<>(unshuffled);
+    }
+
+    /**
+     * Brings back a saved queue without shuffling it again.
+     *
+     * @param original The order before shuffling, or null when the queue was not shuffled.
+     */
+    public void restore(List<T> list, int start, @Nullable List<T> original) {
+        set(list, start, false);
+        if (original == null || original.isEmpty() || items.isEmpty()) return;
+
+        // Tracks may have been deleted since, so both lists keep only what is still queued.
+        Set<T> queued = new HashSet<>(items);
+        List<T> order = new ArrayList<>(items.size());
+        Set<T> ordered = new HashSet<>();
+        for (T item : original) {
+            if (queued.contains(item) && ordered.add(item)) order.add(item);
+        }
+        for (T item : items) {
+            if (ordered.add(item)) order.add(item);
+        }
+        unshuffled.addAll(order);
+        shuffled = true;
     }
 
     public void jumpTo(int position) {

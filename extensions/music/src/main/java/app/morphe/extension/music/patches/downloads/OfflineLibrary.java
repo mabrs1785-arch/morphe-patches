@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -56,6 +57,9 @@ public final class OfflineLibrary {
 
     private static final ExecutorService worker = Executors.newSingleThreadExecutor();
     private static final Set<Listener> listeners = new CopyOnWriteArraySet<>();
+
+    /** Paths deleted but maybe still in a list the worker is building. */
+    private static final Set<String> deleted = ConcurrentHashMap.newKeySet();
 
     /** Replaced as a whole, so readers on the main thread always see a complete list. */
     private static volatile List<OfflineTrack> tracks = Collections.emptyList();
@@ -124,7 +128,11 @@ public final class OfflineLibrary {
         if (context == null) return;
         Context app = context.getApplicationContext();
         worker.execute(() -> {
+            // Before the catalogue was ever read there is nothing to add to: saving now would
+            // replace the index of every download with this one track. The next scan lists it.
+            if (!loaded) return;
             OfflineTrack track = OfflineTrack.load(audioFile);
+            deleted.remove(track.path());
             List<OfflineTrack> updated = new ArrayList<>(tracks);
             updated.removeIf(existing -> existing.path().equals(track.path()));
             updated.add(track);
@@ -135,16 +143,24 @@ public final class OfflineLibrary {
     }
 
     /** Files were deleted, they leave the catalogue and the play queue. */
-    public static void onTracksDeleted(Context context, Collection<OfflineTrack> deleted) {
+    public static void onTracksDeleted(Context context, Collection<OfflineTrack> removed) {
         Context app = context.getApplicationContext();
         List<String> paths = new ArrayList<>();
-        for (OfflineTrack track : deleted) paths.add(track.path());
+        for (OfflineTrack track : removed) paths.add(track.path());
+        // Remembered until the worker has caught up, so a scan still running cannot bring them
+        // back when it publishes what it read before the deletion.
+        deleted.addAll(paths);
 
-        List<OfflineTrack> updated = new ArrayList<>(tracks);
-        updated.removeIf(track -> paths.contains(track.path()));
-        publish(updated);
+        publish(new ArrayList<>(tracks));
         notifyListeners();
-        worker.execute(() -> saveIndex(app, updated));
+        // Queued behind any scan or download, so it works on their final list.
+        worker.execute(() -> {
+            List<OfflineTrack> updated = new ArrayList<>(tracks);
+            publish(updated);
+            if (loaded) saveIndex(app, updated);
+            deleted.removeAll(paths);
+            notifyListeners();
+        });
         OfflinePlaybackService.onTracksDeleted(app, paths);
     }
 
@@ -191,11 +207,16 @@ public final class OfflineLibrary {
         } finally {
             loaded = true;
             loading = false;
+            // The last session comes back whether or not a screen is listening by now, and
+            // before the listeners hear about the catalogue.
+            Utils.runOnMainThread(() -> OfflinePlaybackService.restoreIfIdle(context));
             notifyListeners();
         }
     }
 
+    /** @param list Mutable, deleted tracks are dropped from it. */
     private static void publish(List<OfflineTrack> list) {
+        if (!deleted.isEmpty()) list.removeIf(track -> deleted.contains(track.path()));
         Map<String, OfflineTrack> paths = new HashMap<>(list.size() * 2);
         for (OfflineTrack track : list) paths.put(track.path(), track);
         byPath = paths;

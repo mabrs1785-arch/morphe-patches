@@ -174,6 +174,7 @@ Downloaded tracks appear here"</string>
     <string name="morphe_music_downloads_track_delete_failed">Could not delete the download</string>
     <string name="morphe_music_downloads_play_failed">Could not play the download</string>
     <string name="morphe_music_downloads_loading">Loading downloads… %1$s / %2$s</string>
+    <string name="morphe_music_downloads_track_subtitle_no_duration">%1$s • %2$s MB</string>
     <string name="morphe_music_downloads_play_next">Play next</string>
     <string name="morphe_music_downloads_add_to_queue">Add to queue</string>
     <string name="morphe_music_downloads_added_next">Plays next</string>

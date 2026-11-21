@@ -145,6 +145,53 @@ public class OfflineQueueTest {
         assertTrue(items.containsAll(Arrays.asList("x", "y")));
     }
 
+    @Test public void playNextStillPlaysNextAfterUnshuffle() {
+        OfflineQueue<String> q = queue(0, "a", "b", "c", "d", "e");
+        q.setShuffle(true);
+        q.playNext("y");
+        q.setShuffle(false);
+        assertEquals("a", q.current());
+        assertEquals("y", q.get(q.index() + 1));
+        assertEquals(6, q.size());
+    }
+
+    @Test public void moveNextStillPlaysNextAfterUnshuffle() {
+        OfflineQueue<String> q = queue(0, "a", "b", "c", "d", "e");
+        q.setShuffle(true);
+        q.moveNext(q.items().indexOf("e"));
+        assertEquals("e", q.get(q.index() + 1));
+        q.setShuffle(false);
+        assertEquals(Arrays.asList("a", "e", "b", "c", "d"), q.items());
+        assertEquals("a", q.current());
+    }
+
+    @Test public void restoreKeepsTheShuffleAndTheOriginalOrder() {
+        OfflineQueue<String> q = new OfflineQueue<>(new Random(3));
+        q.restore(Arrays.asList("c", "a", "b"), 0, Arrays.asList("a", "b", "c"));
+        assertTrue(q.isShuffled());
+        assertEquals(Arrays.asList("c", "a", "b"), q.items());
+        assertEquals("c", q.current());
+        q.setShuffle(false);
+        assertEquals(Arrays.asList("a", "b", "c"), q.items());
+        assertEquals("c", q.current());
+    }
+
+    @Test public void restoreForgetsDeletedSongsInBothOrders() {
+        OfflineQueue<String> q = new OfflineQueue<>(new Random(3));
+        q.restore(Arrays.asList("c", "a", "x"), 1, Arrays.asList("a", "b", "c"));
+        assertEquals("a", q.current());
+        q.setShuffle(false);
+        assertEquals(Arrays.asList("a", "c", "x"), q.items());
+        assertEquals("a", q.current());
+    }
+
+    @Test public void restoreWithoutAnOriginalOrderIsNotShuffled() {
+        OfflineQueue<String> q = new OfflineQueue<>();
+        q.restore(Arrays.asList("a", "b"), 1, null);
+        assertFalse(q.isShuffled());
+        assertEquals("b", q.current());
+    }
+
     @Test public void shuffleAllStartsAnywhereAndKeepsEverySong() {
         OfflineQueue<String> q = new OfflineQueue<>(new Random(1));
         List<String> list = new ArrayList<>();

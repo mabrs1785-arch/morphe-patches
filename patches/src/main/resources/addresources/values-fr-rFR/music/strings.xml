@@ -129,6 +129,8 @@ Second \"item\" text"</string>
   <!-- 'Download' should be translated using the same localized wording YouTube displays for the menu. -->
   <string name="morphe_external_downloader_menu_title">Utiliser le téléchargeur externe pour le menu \'Télécharger\'</string>
   <string name="morphe_external_downloader_menu_summary">L\'option Télécharger des menus ouvre votre téléchargeur externe à la place</string>
+  <string name="morphe_music_download_on_like_title">Télécharger les titres aimés</string>
+  <string name="morphe_music_download_on_like_summary">Aimer un titre le télécharge aussi, pour lire vos titres aimés hors connexion. Nécessite le patch Return YouTube Dislike</string>
   <string name="morphe_music_downloads_screen_title">Téléchargements</string>
   <string name="morphe_music_downloads_empty">"Aucun téléchargement
 Les morceaux téléchargés apparaîtront ici"</string>

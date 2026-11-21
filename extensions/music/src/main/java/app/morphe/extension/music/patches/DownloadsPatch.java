@@ -21,7 +21,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import android.content.Context;
+
+import java.io.File;
+
 import app.morphe.extension.music.patches.downloads.LocalDownloadManager;
+import app.morphe.extension.music.patches.downloads.OfflineLibrary;
 import app.morphe.extension.music.patches.downloads.LocalDownloadsFragment;
 import app.morphe.extension.music.settings.Settings;
 import app.morphe.extension.music.shared.VideoInformation;
@@ -53,6 +58,8 @@ public final class DownloadsPatch {
     /** Command field of the 'ypc/get_offline_upsell' endpoint. */
     private static final int OFFLINE_UPSELL_ENDPOINT = 133724106;
     private static final Pattern VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
+    /** Endpoint of a like, see {@code ReturnYouTubeDislike.Vote}. */
+    private static final String LIKE_ENDPOINT = "like/like";
 
     private static volatile long lastFlyoutDownloadTime;
     private static volatile long lastMainPlayerDownloadTime;
@@ -115,6 +122,35 @@ public final class DownloadsPatch {
 
         ExternalDownloaderPreference.launchExternalDownloader(
                 videoId, Utils.getActivity(), "https://music.youtube.com/watch?v=" + videoId);
+    }
+
+    /**
+     * Called for every like, dislike or removed vote, off the main thread. A liked song is
+     * downloaded, so the Liked songs playlist stays playable offline.
+     */
+    public static void onVote(@Nullable String endpoint, @Nullable String videoId) {
+        try {
+            if (!LIKE_ENDPOINT.equals(endpoint) || !inAppDownloads()
+                    || !Settings.DOWNLOAD_ON_LIKE.get()) {
+                return;
+            }
+            // Liking a playlist or an album sends no video id.
+            if (videoId == null || !VIDEO_ID.matcher(videoId).matches()) return;
+
+            Context context = Utils.getContext();
+            if (context != null) {
+                File root = OfflineLibrary.root(context);
+                if (new File(root, videoId + ".webm").isFile()
+                        || new File(root, videoId + ".m4a").isFile()) {
+                    Logger.printDebug(() -> "Liked song already downloaded: " + videoId);
+                    return;
+                }
+            }
+            Logger.printDebug(() -> "Downloading liked song " + videoId);
+            Utils.runOnMainThread(() -> LocalDownloadManager.enqueue(videoId));
+        } catch (Exception ex) {
+            Logger.printException(() -> "onVote failure", ex);
+        }
     }
 
     private static void openLocalDownloads() {

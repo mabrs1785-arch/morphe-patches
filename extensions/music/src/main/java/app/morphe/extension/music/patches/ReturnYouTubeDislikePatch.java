@@ -144,6 +144,8 @@ public class ReturnYouTubeDislikePatch {
      * @param videoId  video ID included in the endpoint request body
      */
     public static void sendVote(String endpoint, String videoId) {
+        // Liked songs are saved for offline playback, whether dislikes are shown or not.
+        DownloadsPatch.onVote(endpoint, videoId);
         try {
             if (!Settings.RYD_ENABLED.get()) {
                 return;

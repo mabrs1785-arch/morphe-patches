@@ -141,6 +141,8 @@ Second \"item\" text"</string>
     <!-- 'Download' should be translated using the same localized wording YouTube displays for the menu. -->
     <string name="morphe_external_downloader_menu_title">Use external downloader for Download menu</string>
     <string name="morphe_external_downloader_menu_summary">The Download option of menus opens your external downloader instead</string>
+    <string name="morphe_music_download_on_like_title">Download liked songs</string>
+    <string name="morphe_music_download_on_like_summary">Liking a song also downloads it, so your liked songs play offline. Needs the Return YouTube Dislike patch</string>
     <string name="morphe_music_downloads_screen_title">Downloads</string>
     <string name="morphe_music_downloads_empty">"No downloads
 Downloaded tracks appear here"</string>
